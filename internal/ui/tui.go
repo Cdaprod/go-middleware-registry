@@ -1,4 +1,4 @@
-// File: internal/ui/tui.go (Enhanced)
+// File: internal/ui/tui.go
 package ui
 
 import (
@@ -140,18 +140,18 @@ func handleListSelection(reg *registry.Registry, tab int, item listItem) {
 			// Implement Add Repository logic
 			repoName := promptInput("Enter repository name:")
 			repoPath := promptInput("Enter repository path:")
-			reg.Actor.MsgChan <- AddRepo{Name: repoName, Path: repoPath}
+			reg.RegistryActor.MsgChan <- AddRepo{Name: repoName, Path: repoPath}
 			fmt.Println("Add Repository command sent.")
 		case "Scan Projects":
-			reg.Actor.MsgChan <- ScanDir{Directory: reg.Config.ProjectsPath}
+			reg.RegistryActor.MsgChan <- ScanDir{Directory: reg.Config.ProjectsPath}
 			fmt.Println("Scan initiated.")
 		case "Toggle Repository":
 			repoName := promptInput("Enter repository name to toggle:")
-			reg.Actor.MsgChan <- ToggleRepo{Name: repoName}
+			reg.RegistryActor.MsgChan <- ToggleRepo{Name: repoName}
 			fmt.Println("Toggle command sent.")
 		case "Configure Repository":
 			repoName := promptInput("Enter repository name to configure:")
-			reg.Actor.MsgChan <- ConfigureRepo{Name: repoName}
+			reg.RegistryActor.MsgChan <- ConfigureRepo{Name: repoName}
 			fmt.Println("Configure command sent.")
 		}
 	case 1: // Repositories
@@ -160,7 +160,7 @@ func handleListSelection(reg *registry.Registry, tab int, item listItem) {
 		repoName = strings.TrimPrefix(repoName, "🐳 ")
 		fmt.Printf("Repository selected: %s\n", repoName)
 		// Example: Display detailed info
-		displayRepoInfo(reg.Actor.Repos[repoName])
+		displayRepoInfo(reg.RegistryActor.Repos[repoName])
 	case 2: // Configurations
 		// Implement configuration actions
 		fmt.Printf("Configuration selected: %s\n", item.title)
