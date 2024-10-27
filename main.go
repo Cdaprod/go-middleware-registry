@@ -1,14 +1,19 @@
-// File: main.go
+// File: main.go (Graceful Shutdown)
 package main
 
 import (
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/Cdaprod/go-middleware-registry/internal/ui"
 	"github.com/Cdaprod/go-middleware-registry/registry"
 	"github.com/spf13/cobra"
 )
+
+// Global Registry instance
+var globalRegistry *registry.Registry
 
 // Root command for the CLI application.
 var rootCmd = &cobra.Command{
@@ -17,49 +22,43 @@ var rootCmd = &cobra.Command{
 	Long:  "A CLI application for managing repositories in /home/cdaprod/Projects with support for Git repositories and Docker containers.",
 }
 
-// List command to list all repositories.
 var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all repositories",
 	Run: func(cmd *cobra.Command, args []string) {
-		reg, err := registry.NewRegistry()
-		if err != nil {
-			fmt.Printf("Error initializing registry: %v\n", err)
+		if globalRegistry == nil {
+			fmt.Println("Registry not initialized.")
 			os.Exit(1)
 		}
-		displayTable(reg.ListItems())
+		items := globalRegistry.ListItems()
+		displayTable(items)
 	},
 }
 
-// Scan command to scan the projects directory for repositories.
 var scanCmd = &cobra.Command{
 	Use:   "scan",
 	Short: "Scan projects directory for repositories",
 	Run: func(cmd *cobra.Command, args []string) {
-		reg, err := registry.NewRegistry()
-		if err != nil {
-			fmt.Printf("Error initializing registry: %v\n", err)
+		if globalRegistry == nil {
+			fmt.Println("Registry not initialized.")
 			os.Exit(1)
 		}
-
-		fmt.Printf("Discovered %d repositories in %s\n", len(reg.Items), reg.Config.ProjectsPath)
-		displayTable(reg.ListItems())
+		globalRegistry.Actor.MsgChan <- ScanDir{Directory: globalRegistry.Config.ProjectsPath}
+		fmt.Printf("Scan initiated for directory: %s\n", globalRegistry.Config.ProjectsPath)
 	},
 }
 
-// Info command to show detailed information about a repository.
 var infoCmd = &cobra.Command{
 	Use:   "info [repository]",
 	Short: "Show detailed information about a repository",
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		reg, err := registry.NewRegistry()
-		if err != nil {
-			fmt.Printf("Error initializing registry: %v\n", err)
+		if globalRegistry == nil {
+			fmt.Println("Registry not initialized.")
 			os.Exit(1)
 		}
 
-		item, exists := reg.Items[args[0]]
+		item, exists := globalRegistry.Actor.Repos[args[0]]
 		if !exists {
 			fmt.Printf("Repository '%s' not found\n", args[0])
 			os.Exit(1)
@@ -69,21 +68,49 @@ var infoCmd = &cobra.Command{
 	},
 }
 
-// Interactive command to launch the TUI.
 var interactiveCmd = &cobra.Command{
 	Use:   "interactive",
 	Short: "Launch interactive TUI",
 	Run: func(cmd *cobra.Command, args []string) {
-		reg, err := registry.NewRegistry()
-		if err != nil {
-			fmt.Printf("Error initializing registry: %v\n", err)
+		if globalRegistry == nil {
+			fmt.Println("Registry not initialized.")
 			os.Exit(1)
 		}
 
-		if err := ui.LaunchTUI(reg); err != nil {
+		if err := ui.LaunchTUI(globalRegistry); err != nil {
 			fmt.Printf("Error starting TUI: %v\n", err)
 			os.Exit(1)
 		}
+	},
+}
+
+var toggleCmd = &cobra.Command{
+	Use:   "toggle [repository]",
+	Short: "Toggle a repository's active state",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		if globalRegistry == nil {
+			fmt.Println("Registry not initialized.")
+			os.Exit(1)
+		}
+
+		globalRegistry.Actor.MsgChan <- ToggleRepo{Name: args[0]}
+		fmt.Printf("Toggle command sent for repository: %s\n", args[0])
+	},
+}
+
+var configureCmd = &cobra.Command{
+	Use:   "configure [repository]",
+	Short: "Configure a repository with Docker and Pipeline",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		if globalRegistry == nil {
+			fmt.Println("Registry not initialized.")
+			os.Exit(1)
+		}
+
+		globalRegistry.Actor.MsgChan <- ConfigureRepo{Name: args[0]}
+		fmt.Printf("Configure command sent for repository: %s\n", args[0])
 	},
 }
 
@@ -92,9 +119,29 @@ func init() {
 	rootCmd.AddCommand(scanCmd)
 	rootCmd.AddCommand(infoCmd)
 	rootCmd.AddCommand(interactiveCmd)
+	rootCmd.AddCommand(toggleCmd)
+	rootCmd.AddCommand(configureCmd)
 }
 
 func main() {
+	var err error
+	globalRegistry, err = registry.NewRegistry()
+	if err != nil {
+		fmt.Printf("Error initializing registry: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Handle graceful shutdown
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		fmt.Println("\nShutting down gracefully...")
+		close(globalRegistry.Actor.MsgChan)
+		globalRegistry.actorWg.Wait()
+		os.Exit(0)
+	}()
+
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -105,7 +152,11 @@ func main() {
 func displayTable(items []registry.RegistryItem) {
 	fmt.Println("Displaying items in table format:")
 	for _, item := range items {
-		fmt.Printf(" - %s: %s\n", item.Name, item.Path)
+		status := "Disabled"
+		if item.Enabled {
+			status = "Enabled"
+		}
+		fmt.Printf(" - %s: %s [%s]\n", item.Name, item.Path, status)
 	}
 }
 
