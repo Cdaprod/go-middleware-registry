@@ -2,19 +2,36 @@
 package ui
 
 import (
+    "encoding/json"
+    "bufio"
+    "bytes"
     "context"
     "fmt"
+    "io"
+    "os"
+    "path/filepath"
     "strings"
     "sync"
-
+    "time"
+    "archive/tar"
+    
     tea "github.com/charmbracelet/bubbletea"
     "github.com/charmbracelet/bubbles/spinner"
     "github.com/charmbracelet/bubbles/viewport"
+    "github.com/docker/docker/api/types"
     "github.com/docker/docker/api/types/container"
+    "github.com/docker/docker/client"
     "github.com/Cdaprod/go-middleware-registry/registry"
 )
 
-// Message types for Docker operations
+const (
+    MsgTypeError   = "error"
+    MsgTypeSuccess = "success"
+    MsgTypeInfo    = "info"
+    MsgTypeWarning = "warning"
+)
+
+// Message types
 type (
     buildCompleteMsg struct {
         repoName string
@@ -45,7 +62,7 @@ type (
     }
 )
 
-// containerStats holds simplified container statistics
+// Stats tracking
 type containerStats struct {
     CPUPercentage    float64
     MemoryUsage      float64
@@ -55,20 +72,7 @@ type containerStats struct {
     RunningProcesses int64
 }
 
-// DockerManager handles Docker operations in the UI
-type DockerManager struct {
-    registry    *registry.Registry
-    activeRepo  string
-    containers  map[string]*containerView
-    viewports   map[string]viewport.Model
-    spinners    map[string]spinner.Model
-    operations  map[string]string
-    mu         sync.Mutex
-    width      int
-    height     int
-}
-
-// containerView represents a single container's view state
+// Container view representation
 type containerView struct {
     ID        string
     Name      string
@@ -79,17 +83,56 @@ type containerView struct {
     viewport  viewport.Model
 }
 
-func NewDockerManager(reg *registry.Registry) *DockerManager {
-    return &DockerManager{
-        registry:    reg,
-        containers:  make(map[string]*containerView),
-        viewports:   make(map[string]viewport.Model),
-        spinners:    make(map[string]spinner.Model),
-        operations:  make(map[string]string),
-    }
+// DockerManager handles all Docker operations
+type DockerManager struct {
+    // Core components
+    client     *client.Client
+    registry   *registry.Registry
+    containers *ContainerManager
+    
+    // State tracking
+    activeRepo   string
+    containerID  string
+    status      map[string]string
+    logs        map[string]string
+    
+    // UI components
+    menu       *Menu
+    viewports  map[string]viewport.Model
+    spinners   map[string]spinner.Model
+    operations map[string]string
+    
+    // Dimensions
+    width    int
+    height   int
+    
+    mu      sync.Mutex
 }
 
-// startOperation begins a Docker operation with a spinner
+func NewDockerManager(reg *registry.Registry) (*DockerManager, error) {
+    docker, err := client.NewClientWithOpts(client.FromEnv)
+    if err != nil {
+        return nil, fmt.Errorf("failed to create docker client: %w", err)
+    }
+
+    containers, err := NewContainerManager()
+    if err != nil {
+        return nil, fmt.Errorf("failed to create container manager: %w", err)
+    }
+
+    return &DockerManager{
+        client:     docker,
+        registry:   reg,
+        containers: containers,
+        status:     make(map[string]string),
+        logs:      make(map[string]string),
+        viewports: make(map[string]viewport.Model),
+        spinners:  make(map[string]spinner.Model),
+        operations: make(map[string]string),
+    }, nil
+}
+
+// Operation initiation
 func (dm *DockerManager) startOperation(id, operation string) {
     dm.mu.Lock()
     defer dm.mu.Unlock()
@@ -101,95 +144,42 @@ func (dm *DockerManager) startOperation(id, operation string) {
     dm.operations[id] = operation
 }
 
-// buildImage initiates an image build with progress
-func (dm *DockerManager) buildImage(repoName string) tea.Cmd {
-    return func() tea.Msg {
-        err := dm.registry.BuildImage(repoName)
-        return buildCompleteMsg{
-            repoName: repoName,
-            success:  err == nil,
-            error:    err,
-        }
-    }
-}
-
-// runContainer starts a container and begins monitoring
-func (dm *DockerManager) runContainer(repoName string) tea.Cmd {
-    return func() tea.Msg {
-        config := &container.Config{
-            Image: repoName + ":latest",
-            Tty:   true,
-        }
-        
-        containerID, err := dm.registry.RunContainer(repoName, config)
-        if err != nil {
-            return containerStartedMsg{error: err}
-        }
-
-        // Start monitoring if successfully started
-        go dm.monitorContainer(containerID)
-
-        return containerStartedMsg{
-            containerID: containerID,
-        }
-    }
-}
-
-// monitorContainer handles continuous container monitoring
-func (dm *DockerManager) monitorContainer(containerID string) {
-    ctx := context.Background()
-    logsCh := make(chan string)
-    statsCh := make(chan containerStats)
-    
-    // Monitor logs
-    go func() {
-        for {
-            logs, err := dm.registry.GetContainerLogs(containerID)
-            if err != nil {
-                continue
-            }
-            logsCh <- logs
-            time.Sleep(time.Second)
-        }
-    }()
-
-    // Monitor stats
-    go func() {
-        for {
-            stats, err := dm.registry.GetContainerStats(containerID)
-            if err != nil {
-                continue
-            }
-            
-            // Convert stats to our simplified format
-            statsCh <- containerStats{
-                CPUPercentage:    calculateCPUPercentage(stats),
-                MemoryUsage:      float64(stats.MemoryStats.Usage),
-                MemoryLimit:      float64(stats.MemoryStats.Limit),
-                NetworkRx:        float64(stats.Networks["eth0"].RxBytes),
-                NetworkTx:        float64(stats.Networks["eth0"].TxBytes),
-                RunningProcesses: stats.PidsStats.Current,
-            }
-            time.Sleep(time.Second)
-        }
-    }()
-
-    // Update UI with monitoring data
-    for {
-        select {
-        case logs := <-logsCh:
-            dm.updateLogs(containerID, logs)
-        case stats := <-statsCh:
-            dm.updateStats(containerID, stats)
-        }
-    }
-}
-
-// Update handles all Docker-related messages
+// UI Update handling
 func (dm *DockerManager) Update(msg tea.Msg) tea.Cmd {
     var cmds []tea.Cmd
 
     switch msg := msg.(type) {
+    case tea.KeyMsg:
+        if dm.menu != nil && dm.menu.Visible {
+            menu, cmd := dm.menu.Update(msg)
+            dm.menu = menu
+            if cmd != nil {
+                cmds = append(cmds, cmd)
+            }
+        } else if dm.containers != nil {
+            cmd := dm.containers.Update(msg)
+            if cmd != nil {
+                cmds = append(cmds, cmd)
+            }
+        }
+
+    case menuMsg:
+        switch msg.Type {
+        case "select":
+            cmd := dm.handleMenuAction(msg.Action)
+            if cmd != nil {
+                cmds = append(cmds, cmd)
+            }
+        case "close":
+            dm.menu = nil
+        }
+
+    case dockerMsg:
+        cmd := dm.handleDockerMessage(msg)
+        if cmd != nil {
+            cmds = append(cmds, cmd)
+        }
+
     case buildCompleteMsg:
         delete(dm.spinners, msg.repoName)
         delete(dm.operations, msg.repoName)
@@ -202,14 +192,11 @@ func (dm *DockerManager) Update(msg tea.Msg) tea.Cmd {
         if msg.error != nil {
             return dm.showError(msg.error)
         }
-        dm.containers[msg.containerID] = &containerView{
-            ID:     msg.containerID,
-            Status: "running",
-        }
+        dm.containerID = msg.containerID
         return dm.showSuccess(fmt.Sprintf("Started container %s", msg.containerID))
 
     case logsUpdatedMsg:
-        if c, exists := dm.containers[msg.containerID]; exists {
+        if c, exists := dm.containers.containers[msg.containerID]; exists {
             c.Logs = msg.logs
             if vp, ok := dm.viewports[msg.containerID]; ok {
                 vp.SetContent(msg.logs)
@@ -218,7 +205,7 @@ func (dm *DockerManager) Update(msg tea.Msg) tea.Cmd {
         }
 
     case statsUpdatedMsg:
-        if c, exists := dm.containers[msg.containerID]; exists {
+        if c, exists := dm.containers.containers[msg.containerID]; exists {
             c.Stats = msg.stats
         }
     }
@@ -246,7 +233,7 @@ func (dm *DockerManager) View() string {
     }
 
     // Show running containers
-    if len(dm.containers) > 0 {
+    if len(dm.containers.containers) > 0 {
         b.WriteString("\nRunning Containers:\n")
         for _, c := range dm.containers {
             style := containerStyle
@@ -276,17 +263,364 @@ func (dm *DockerManager) View() string {
     return b.String()
 }
 
-// Helper functions for CPU percentage calculation
 func calculateCPUPercentage(stats *types.Stats) float64 {
-    // CPU percentage calculation logic
-    return 0.0 // Placeholder
+    cpuDelta := float64(stats.CPUStats.CPUUsage.TotalUsage) - float64(stats.PreCPUStats.CPUUsage.TotalUsage)
+    systemDelta := float64(stats.CPUStats.SystemUsage) - float64(stats.PreCPUStats.SystemUsage)
+
+    if systemDelta > 0.0 && cpuDelta > 0.0 {
+        return (cpuDelta / systemDelta) * float64(len(stats.CPUStats.CPUUsage.PercpuUsage)) * 100.0
+    }
+    return 0.0
 }
 
-// Utility functions for showing success/error messages
 func (dm *DockerManager) showSuccess(message string) tea.Cmd {
-    return nil // Implement message display
+    return func() tea.Msg {
+        return statusMsg{
+            Type:    "success",
+            Message: message,
+        }
+    }
 }
 
 func (dm *DockerManager) showError(err error) tea.Cmd {
-    return nil // Implement error display
+    return func() tea.Msg {
+        return statusMsg{
+            Type:    "error",
+            Message: err.Error(),
+        }
+    }
+}
+func (dm *DockerManager) ShowOperationsMenu(repoName string) tea.Cmd {
+    dm.activeRepo = repoName
+    dm.menu = DockerOperationsMenu(repoName)
+    return nil
+}
+
+func (dm *DockerManager) handleMenuAction(action string) tea.Cmd {
+    switch action {
+    case "run":
+        return dm.runContainer
+    case "build":
+        return dm.buildImage
+    case "logs":
+        return dm.viewLogs
+    case "stop":
+        return dm.stopContainer
+    case "remove":
+        return dm.removeContainer
+    }
+    return nil
+}
+
+// In docker_manager.go, add these implementations:
+
+// Docker operations implementation
+func (dm *DockerManager) runContainer() tea.Msg {
+    ctx := context.Background()
+    
+    if dm.activeRepo == "" {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: "No repository selected",
+        }
+    }
+
+    // Create container configuration
+    config := &container.Config{
+        Image: dm.activeRepo + ":latest",
+        Tty:   true,
+    }
+
+    // Create container
+    resp, err := dm.client.ContainerCreate(ctx, config, nil, nil, nil, "")
+    if err != nil {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: fmt.Sprintf("Failed to create container: %v", err),
+        }
+    }
+
+    // Start container
+    if err := dm.client.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: fmt.Sprintf("Failed to start container: %v", err),
+        }
+    }
+
+    // Add to container manager
+    dm.containers.AddContainer(&ContainerView{
+        id:   resp.ID,
+        name: dm.activeRepo,
+    })
+
+    return dockerMsg{
+        Type:        MsgTypeSuccess,
+        Message:     "Container started successfully",
+        ContainerID: resp.ID,
+    }
+}
+
+func (dm *DockerManager) buildImage() tea.Msg {
+    ctx := context.Background()
+
+    if dm.activeRepo == "" {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: "No repository selected",
+        }
+    }
+
+    // Create build context tar
+    buildCtx, err := createBuildContext(dm.activeRepo)
+    if err != nil {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: fmt.Sprintf("Failed to create build context: %v", err),
+        }
+    }
+
+    // Build options
+    options := types.ImageBuildOptions{
+        Tags:       []string{dm.activeRepo + ":latest"},
+        Dockerfile: "Dockerfile",
+    }
+
+    // Build the image
+    response, err := dm.client.ImageBuild(ctx, buildCtx, options)
+    if err != nil {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: fmt.Sprintf("Failed to build image: %v", err),
+        }
+    }
+    defer response.Body.Close()
+
+    // Read build output
+    var output strings.Builder
+    scanner := bufio.NewScanner(response.Body)
+    for scanner.Scan() {
+        output.WriteString(scanner.Text() + "\n")
+    }
+
+    return dockerMsg{
+        Type:    MsgTypeSuccess,
+        Message: "Image built successfully",
+        Data:    output.String(),
+    }
+}
+
+func (dm *DockerManager) viewLogs() tea.Msg {
+    if dm.activeRepo == "" || dm.containerID == "" {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: "No active container",
+        }
+    }
+
+    logs, err := dm.containers.GetContainerLogs(dm.containerID)
+    if err != nil {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: fmt.Sprintf("Failed to get logs: %v", err),
+        }
+    }
+
+    return dockerMsg{
+        Type:        MsgTypeSuccess,
+        ContainerID: dm.containerID,
+        Data:        logs,
+    }
+}
+
+func (dm *DockerManager) stopContainer() tea.Msg {
+    ctx := context.Background()
+
+    if dm.containerID == "" {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: "No active container",
+        }
+    }
+
+    timeout := int(10)
+    err := dm.client.ContainerStop(ctx, dm.containerID, container.StopOptions{Timeout: &timeout})
+    if err != nil {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: fmt.Sprintf("Failed to stop container: %v", err),
+        }
+    }
+
+    return dockerMsg{
+        Type:        MsgTypeSuccess,
+        Message:     "Container stopped successfully",
+        ContainerID: dm.containerID,
+    }
+}
+
+func (dm *DockerManager) removeContainer() tea.Msg {
+    ctx := context.Background()
+
+    if dm.containerID == "" {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: "No active container",
+        }
+    }
+
+    err := dm.client.ContainerRemove(ctx, dm.containerID, types.ContainerRemoveOptions{
+        Force: true,
+    })
+    if err != nil {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: fmt.Sprintf("Failed to remove container: %v", err),
+        }
+    }
+
+    // Remove from container manager
+    dm.containers.RemoveContainer(dm.containerID)
+
+    return dockerMsg{
+        Type:    MsgTypeSuccess,
+        Message: "Container removed successfully",
+    }
+}
+
+func (dm *DockerManager) handleDockerMessage(msg dockerMsg) tea.Cmd {
+    switch msg.Type {
+    case MsgTypeError:
+        return func() tea.Msg {
+            return statusMsg{
+                Type:    "error",
+                Message: msg.Message,
+            }
+        }
+    case MsgTypeSuccess:
+        if msg.ContainerID != "" {
+            dm.containerID = msg.ContainerID
+        }
+        return func() tea.Msg {
+            return statusMsg{
+                Type:    "success",
+                Message: msg.Message,
+            }
+        }
+    }
+    return nil
+}
+
+// Helper function to create build context
+func createBuildContext(repoPath string) (io.Reader, error) {
+    var buf bytes.Buffer
+    tw := tar.NewWriter(&buf)
+
+    // Walk through the repository directory
+    err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
+        if err != nil {
+            return err
+        }
+
+        // Create tar header
+        header, err := tar.FileInfoHeader(info, info.Name())
+        if err != nil {
+            return err
+        }
+
+        // Update header name to be relative to repo path
+        relPath, err := filepath.Rel(repoPath, path)
+        if err != nil {
+            return err
+        }
+        header.Name = relPath
+
+        // Write header
+        if err := tw.WriteHeader(header); err != nil {
+            return err
+        }
+
+        // If not a directory, write file content
+        if !info.IsDir() {
+            file, err := os.Open(path)
+            if err != nil {
+                return err
+            }
+            defer file.Close()
+
+            if _, err := io.Copy(tw, file); err != nil {
+                return err
+            }
+        }
+
+        return nil
+    })
+
+    if err != nil {
+        return nil, err
+    }
+
+    // Close tar writer
+    if err := tw.Close(); err != nil {
+        return nil, err
+    }
+
+    return &buf, nil
+}
+
+func (dm *DockerManager) SelectContainer(containerID string) {
+    dm.mu.Lock()
+    defer dm.mu.Unlock()
+    
+    // Deselect all containers first
+    for _, c := range dm.containers.containers {
+        c.Selected = false
+    }
+    
+    // Select the specified container
+    if container, exists := dm.containers.containers[containerID]; exists {
+        container.Selected = true
+        // Create viewport if doesn't exist
+        if _, ok := dm.viewports[containerID]; !ok {
+            vp := viewport.New(dm.width-4, 10) // Adjust height as needed
+            vp.Style = viewportStyle
+            dm.viewports[containerID] = vp
+        }
+    }
+}
+
+// Add this function
+func (dm *DockerManager) monitorContainer(containerID string) {
+    // Start stats monitoring
+    go dm.monitorStats(containerID)
+    
+    // Start logs monitoring
+    go func() {
+        ctx := context.Background()
+        options := types.ContainerLogsOptions{
+            ShowStdout: true,
+            ShowStderr: true,
+            Follow:     true,
+            Timestamps: true,
+        }
+
+        logs, err := dm.client.ContainerLogs(ctx, containerID, options)
+        if err != nil {
+            return
+        }
+        defer logs.Close()
+
+        scanner := bufio.NewScanner(logs)
+        for scanner.Scan() {
+            dm.mu.Lock()
+            if container, exists := dm.containers.containers[containerID]; exists {
+                container.Logs += scanner.Text() + "\n"
+                if vp, ok := dm.viewports[containerID]; ok {
+                    vp.SetContent(container.Logs)
+                    dm.viewports[containerID] = vp
+                }
+            }
+            dm.mu.Unlock()
+        }
+    }()
 }
