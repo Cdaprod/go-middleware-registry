@@ -3,9 +3,9 @@ package registry
 
 import (
 	"fmt"
-//	"io/ioutil"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/docker/docker/client"
@@ -26,11 +26,13 @@ type RegistryItem struct {
 	HasDockerfile bool
 }
 
-// Registry manages a collection of RegistryItems.
+// Registry manages a collection of RepoActors and the RegistryActor.
 type Registry struct {
-	Items  map[string]RegistryItem
-	Docker *client.Client
-	Config *Config
+	RegistryActor  *RegistryActor
+	Coordinator    *CoordinatorActor
+	Docker         *client.Client
+	Config         *Config
+	wg             *sync.WaitGroup
 }
 
 // Config holds the configuration settings for the Registry.
@@ -52,10 +54,18 @@ func NewRegistry() (*Registry, error) {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
 	}
 
+	wg := &sync.WaitGroup{}
+
+	// Initialize RegistryActor and Coordinator
+	registryActor := NewRegistryActor(wg)
+	coordinator := NewCoordinatorActor(wg, registryActor)
+
 	reg := &Registry{
-		Items:  make(map[string]RegistryItem),
-		Docker: docker,
-		Config: config,
+		RegistryActor: registryActor,
+		Coordinator:   coordinator,
+		Docker:        docker,
+		Config:        config,
+		wg:            wg,
 	}
 
 	// Auto-discover repositories
@@ -63,10 +73,14 @@ func NewRegistry() (*Registry, error) {
 		return nil, fmt.Errorf("failed to discover repositories: %w", err)
 	}
 
+	// Start RegistryActor and Coordinator
+	reg.RegistryActor.Start()
+	reg.Coordinator.Start()
+
 	return reg, nil
 }
 
-// discoverRepositories scans the ProjectsPath for Git repositories with optional Dockerfiles.
+// discoverRepositories scans the ProjectsPath for Git repositories and adds them to the registry.
 func (r *Registry) discoverRepositories() error {
 	entries, err := os.ReadDir(r.Config.ProjectsPath)
 	if err != nil {
@@ -95,32 +109,28 @@ func (r *Registry) discoverRepositories() error {
 		hasDockerfile := dockerfileErr == nil
 
 		if isGitRepo {
-			item := RegistryItem{
-				ID:            entry.Name(),
-				Name:          entry.Name(),
-				Type:          "repository",
-				Status:        "active",
-				Path:          projectPath,
-				CreatedAt:     info.ModTime(),
-				LastUpdated:   info.ModTime(),
-				Enabled:       true,
-				GitRepo:       repo,
-				HasDockerfile: hasDockerfile,
+			// Add the repository to the RegistryActor
+			r.RegistryActor.MsgChan <- AddRepo{
+				Name: entry.Name(),
+				Path: projectPath,
 			}
-			r.Items[item.ID] = item
+
+			// Optionally add to the Coordinator for dependency management
+			// Example: repoName depends on "base-repo"
+			if entry.Name() != "base-repo" {
+				r.Coordinator.AddDependency(entry.Name(), []string{"base-repo"})
+			}
+
+			fmt.Printf("Repository '%s' discovered and added to the registry.\n", entry.Name())
 		}
 	}
 
 	return nil
 }
 
-// ListItems returns a slice of all RegistryItems.
+// ListItems returns a list of all RegistryItems (repositories).
 func (r *Registry) ListItems() []RegistryItem {
-	items := make([]RegistryItem, 0, len(r.Items))
-	for _, item := range r.Items {
-		items = append(items, item)
-	}
-	return items
+	return r.RegistryActor.ListItems()
 }
 
 // loadConfig loads configuration settings. Replace this with actual config loading logic as needed.

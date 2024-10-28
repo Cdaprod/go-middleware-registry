@@ -39,10 +39,10 @@ func NewModel(reg *registry.Registry) model {
 	// Create lists for each tab
 	registrarItems := []list.Item{
 		listItem{title: "Add Repository", desc: "Add a new repository to the registry"},
-		listItem{title: "Initialize Registry", desc: "Initialize the registry configuration"},
 		listItem{title: "Scan Projects", desc: "Scan for new repositories"},
 		listItem{title: "List All", desc: "List all registered repositories"},
 		listItem{title: "Toggle Repository", desc: "Enable/disable a repository"},
+		listItem{title: "Configure Repository", desc: "Configure a repository with Docker and Pipeline"},
 	}
 
 	// Convert registry items to list items
@@ -110,6 +110,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeTab = min(m.activeTab+1, len(m.Tabs)-1)
 		case "left", "h", "shift+tab":
 			m.activeTab = max(m.activeTab-1, 0)
+		case "enter":
+			selectedItem, ok := m.lists[m.activeTab].SelectedItem().(listItem)
+			if ok {
+				handleListSelection(m.registry, m.activeTab, selectedItem)
+			}
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -124,6 +129,51 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds = append(cmds, cmd)
 
 	return m, tea.Batch(cmds...)
+}
+
+// handleListSelection performs actions based on the selected item in the TUI.
+func handleListSelection(reg *registry.Registry, tab int, item listItem) {
+	switch tab {
+	case 0: // Registrar Operations
+		switch item.title {
+		case "Add Repository":
+			// Implement Add Repository logic
+			repoName := promptInput("Enter repository name:")
+			repoPath := promptInput("Enter repository path:")
+			reg.RegistryActor.MsgChan <- AddRepo{Name: repoName, Path: repoPath}
+			fmt.Println("Add Repository command sent.")
+		case "Scan Projects":
+			reg.RegistryActor.MsgChan <- ScanDir{Directory: reg.Config.ProjectsPath}
+			fmt.Println("Scan initiated.")
+		case "Toggle Repository":
+			repoName := promptInput("Enter repository name to toggle:")
+			reg.RegistryActor.MsgChan <- ToggleRepo{Name: repoName}
+			fmt.Println("Toggle command sent.")
+		case "Configure Repository":
+			repoName := promptInput("Enter repository name to configure:")
+			reg.RegistryActor.MsgChan <- ConfigureRepo{Name: repoName}
+			fmt.Println("Configure command sent.")
+		}
+	case 1: // Repositories
+		// Implement actions for repository items
+		repoName := strings.TrimPrefix(item.title, "📁 ")
+		repoName = strings.TrimPrefix(repoName, "🐳 ")
+		fmt.Printf("Repository selected: %s\n", repoName)
+		// Example: Display detailed info
+		displayRepoInfo(reg.RegistryActor.Repos[repoName])
+	case 2: // Configurations
+		// Implement configuration actions
+		fmt.Printf("Configuration selected: %s\n", item.title)
+	}
+}
+
+// promptInput is a placeholder function for user input.
+// In a real application, you'd implement proper input handling.
+func promptInput(prompt string) string {
+	fmt.Printf("%s ", prompt)
+	var input string
+	fmt.Scanln(&input)
+	return input
 }
 
 // View renders the TUI.
