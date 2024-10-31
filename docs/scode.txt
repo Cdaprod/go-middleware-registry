@@ -1,0 +1,3430 @@
+Fix this
+
+-e 
+=== Path: /home/cdaprod/Projects/go-middleware-registry
+=== File: go.mod
+
+module github.com/Cdaprod/go-middleware-registry
+
+go 1.20
+
+replace github.com/Cdaprod/go-middleware-registry => ./
+
+require (
+	github.com/charmbracelet/bubbles v0.20.0
+	github.com/charmbracelet/bubbletea v1.1.0
+	github.com/charmbracelet/lipgloss v0.13.1
+	github.com/docker/docker v24.0.7+incompatible
+	github.com/go-git/go-git/v5 v5.11.0
+	github.com/spf13/cobra v1.8.0
+)
+
+require (
+	dario.cat/mergo v1.0.0 // indirect
+	github.com/Microsoft/go-winio v0.6.1 // indirect
+	github.com/ProtonMail/go-crypto v0.0.0-20230828082145-3c4c8a2d2371 // indirect
+	github.com/atotto/clipboard v0.1.4 // indirect
+	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
+	github.com/charmbracelet/x/ansi v0.3.2 // indirect
+	github.com/charmbracelet/x/term v0.2.0 // indirect
+	github.com/cloudflare/circl v1.3.3 // indirect
+	github.com/cyphar/filepath-securejoin v0.2.4 // indirect
+	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
+	github.com/distribution/reference v0.5.0 // indirect
+	github.com/docker/distribution v2.8.3+incompatible // indirect
+	github.com/docker/go-connections v0.4.0 // indirect
+	github.com/docker/go-units v0.5.0 // indirect
+	github.com/emirpasic/gods v1.18.1 // indirect
+	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
+	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
+	github.com/go-git/go-billy/v5 v5.5.0 // indirect
+	github.com/gogo/protobuf v1.3.2 // indirect
+	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
+	github.com/kevinburke/ssh_config v1.2.0 // indirect
+	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-localereader v0.0.1 // indirect
+	github.com/mattn/go-runewidth v0.0.16 // indirect
+	github.com/moby/term v0.5.0 // indirect
+	github.com/morikuni/aec v1.0.0 // indirect
+	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
+	github.com/muesli/cancelreader v0.2.2 // indirect
+	github.com/muesli/termenv v0.15.2 // indirect
+	github.com/opencontainers/go-digest v1.0.0 // indirect
+	github.com/opencontainers/image-spec v1.0.2 // indirect
+	github.com/pjbgf/sha1cd v0.3.0 // indirect
+	github.com/pkg/errors v0.9.1 // indirect
+	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
+	github.com/rivo/uniseg v0.4.7 // indirect
+	github.com/sahilm/fuzzy v0.1.1 // indirect
+	github.com/sergi/go-diff v1.1.0 // indirect
+	github.com/skeema/knownhosts v1.2.1 // indirect
+	github.com/spf13/pflag v1.0.5 // indirect
+	github.com/xanzy/ssh-agent v0.3.3 // indirect
+	golang.org/x/crypto v0.16.0 // indirect
+	golang.org/x/mod v0.12.0 // indirect
+	golang.org/x/net v0.19.0 // indirect
+	golang.org/x/sync v0.8.0 // indirect
+	golang.org/x/sys v0.24.0 // indirect
+	golang.org/x/text v0.14.0 // indirect
+	golang.org/x/time v0.5.0 // indirect
+	golang.org/x/tools v0.13.0 // indirect
+	gopkg.in/warnings.v0 v0.1.2 // indirect
+	gotest.tools/v3 v3.5.1 // indirect
+)
+
+-e 
+=== Path: /home/cdaprod/Projects/go-middleware-registry/registry
+=== File: docker.go
+
+// File: registry/docker.go
+package registry
+
+import (
+    "context"
+    "fmt"
+    "io"
+    "os"
+    "path/filepath"
+
+    "github.com/docker/docker/api/types"
+    "github.com/docker/docker/api/types/container"
+    "github.com/docker/docker/api/types/filters"
+)
+
+// DockerInfo holds information about a repository's Docker capabilities
+type DockerInfo struct {
+    HasDockerfile bool
+    ImageID       string
+    ImageTags     []string
+    Containers    []types.Container
+    LastBuild     string
+}
+
+// GetDockerInfo retrieves Docker-related information for a repository
+func (r *Registry) GetDockerInfo(repoName string) (*DockerInfo, error) {
+    item, exists := r.Items[repoName]
+    if !exists {
+        return nil, fmt.Errorf("repository not found: %s", repoName)
+    }
+
+    info := &DockerInfo{
+        HasDockerfile: item.HasDockerfile,
+    }
+
+    if !item.HasDockerfile {
+        return info, nil
+    }
+
+    // Get image information
+    imageName := fmt.Sprintf("%s:latest", item.Name)
+    images, err := r.Docker.ImageList(context.Background(), types.ImageListOptions{
+        Filters: filters.NewArgs(filters.Arg("reference", imageName)),
+    })
+    if err == nil && len(images) > 0 {
+        info.ImageID = images[0].ID
+        info.ImageTags = images[0].RepoTags
+    }
+
+    // Get container information
+    containers, err := r.Docker.ContainerList(context.Background(), types.ContainerListOptions{
+        All: true,
+        Filters: filters.NewArgs(filters.Arg("ancestor", imageName)),
+    })
+    if err == nil {
+        info.Containers = containers
+    }
+
+    return info, nil
+}
+
+// BuildImage builds a Docker image for a repository
+func (r *Registry) BuildImage(repoName string) error {
+    item, exists := r.Items[repoName]
+    if !exists {
+        return fmt.Errorf("repository not found: %s", repoName)
+    }
+
+    if !item.HasDockerfile {
+        return fmt.Errorf("repository does not have a Dockerfile: %s", repoName)
+    }
+
+    ctx := context.Background()
+    buildContext := filepath.Join(item.Path)
+
+    // Create build context tar
+    tar, err := createBuildContext(buildContext)
+    if err != nil {
+        return fmt.Errorf("failed to create build context: %w", err)
+    }
+
+    // Build the image
+    resp, err := r.Docker.ImageBuild(ctx, tar, types.ImageBuildOptions{
+        Tags:       []string{fmt.Sprintf("%s:latest", item.Name)},
+        Dockerfile: "Dockerfile",
+    })
+    if err != nil {
+        return fmt.Errorf("failed to build image: %w", err)
+    }
+    defer resp.Body.Close()
+
+    // Read the response
+    _, err = io.Copy(os.Stdout, resp.Body)
+    if err != nil {
+        return fmt.Errorf("failed to read build response: %w", err)
+    }
+
+    return nil
+}
+
+// RunContainer starts a container from a repository's image
+func (r *Registry) RunContainer(repoName string, config *container.Config) (string, error) {
+    ctx := context.Background()
+
+    // Create container
+    resp, err := r.Docker.ContainerCreate(ctx, config, nil, nil, nil, "")
+    if err != nil {
+        return "", fmt.Errorf("failed to create container: %w", err)
+    }
+
+    // Start container
+    if err := r.Docker.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
+        return "", fmt.Errorf("failed to start container: %w", err)
+    }
+
+    return resp.ID, nil
+}
+
+// StopContainer stops a running container
+func (r *Registry) StopContainer(containerID string) error {
+    ctx := context.Background()
+    timeout := int(10)
+    return r.Docker.ContainerStop(ctx, containerID, container.StopOptions{Timeout: &timeout})
+}
+
+// GetContainerLogs retrieves logs from a container
+func (r *Registry) GetContainerLogs(containerID string) (string, error) {
+    ctx := context.Background()
+    
+    options := types.ContainerLogsOptions{
+        ShowStdout: true,
+        ShowStderr: true,
+        Follow:     false,
+        Tail:       "100",
+    }
+
+    logs, err := r.Docker.ContainerLogs(ctx, containerID, options)
+    if err != nil {
+        return "", err
+    }
+    defer logs.Close()
+
+    // Read logs
+    buf := new(strings.Builder)
+    _, err = io.Copy(buf, logs)
+    if err != nil {
+        return "", err
+    }
+
+    return buf.String(), nil
+}
+
+// GetContainerStats retrieves container statistics
+func (r *Registry) GetContainerStats(containerID string) (*types.Stats, error) {
+    ctx := context.Background()
+    
+    stats, err := r.Docker.ContainerStats(ctx, containerID, false)
+    if err != nil {
+        return nil, err
+    }
+    defer stats.Body.Close()
+
+    var containerStats types.Stats
+    if err := json.NewDecoder(stats.Body).Decode(&containerStats); err != nil {
+        return nil, err
+    }
+
+    return &containerStats, nil
+}
+
+// Utility functions
+func createBuildContext(contextPath string) (io.Reader, error) {
+    // Implementation of tar creation
+    // This would create a tar of the build context
+    return nil, nil // Placeholder
+}
+-e 
+=== Path: /home/cdaprod/Projects/go-middleware-registry/registry
+=== File: registry.go
+
+// File: registry/registry.go
+package registry
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/docker/docker/client"
+	git "github.com/go-git/go-git/v5"
+)
+
+// RegistryItem represents an individual repository in the registry.
+type RegistryItem struct {
+	ID            string
+	Name          string
+	Type          string
+	Status        string
+	Path          string
+	CreatedAt     time.Time
+	LastUpdated   time.Time
+	Enabled       bool
+	GitRepo       *git.Repository
+	HasDockerfile bool
+}
+
+// Registry manages a collection of RepoActors and the RegistryActor.
+type Registry struct {
+	RegistryActor  *RegistryActor
+	Coordinator    *CoordinatorActor
+	Docker         *client.Client
+	Config         *Config
+	wg             *sync.WaitGroup
+}
+
+// Config holds the configuration settings for the Registry.
+type Config struct {
+	ProjectsPath string
+	DockerHost   string
+	LogLevel     string
+}
+
+// NewRegistry initializes and returns a new Registry instance.
+func NewRegistry() (*Registry, error) {
+	config, err := loadConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	docker, err := client.NewClientWithOpts(client.FromEnv)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create docker client: %w", err)
+	}
+
+	wg := &sync.WaitGroup{}
+
+	// Initialize RegistryActor and Coordinator
+	registryActor := NewRegistryActor(wg)
+	coordinator := NewCoordinatorActor(wg, registryActor)
+
+	reg := &Registry{
+		RegistryActor: registryActor,
+		Coordinator:   coordinator,
+		Docker:        docker,
+		Config:        config,
+		wg:            wg,
+	}
+
+	// Auto-discover repositories
+	if err := reg.discoverRepositories(); err != nil {
+		return nil, fmt.Errorf("failed to discover repositories: %w", err)
+	}
+
+	// Start RegistryActor and Coordinator
+	reg.RegistryActor.Start()
+	reg.Coordinator.Start()
+
+	return reg, nil
+}
+
+// discoverRepositories scans the ProjectsPath for Git repositories and adds them to the registry.
+func (r *Registry) discoverRepositories() error {
+	entries, err := os.ReadDir(r.Config.ProjectsPath)
+	if err != nil {
+		return fmt.Errorf("failed to read projects directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		// Use entry.Info() to retrieve os.FileInfo
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("failed to retrieve file info: %w", err)
+		}
+
+		projectPath := filepath.Join(r.Config.ProjectsPath, entry.Name())
+
+		// Check if it's a git repository
+		repo, err := git.PlainOpen(projectPath)
+		isGitRepo := err == nil
+
+		// Check for Dockerfile
+		_, dockerfileErr := os.Stat(filepath.Join(projectPath, "Dockerfile"))
+		hasDockerfile := dockerfileErr == nil
+
+		if isGitRepo {
+			// Add the repository to the RegistryActor
+			r.RegistryActor.MsgChan <- AddRepo{
+				Name: entry.Name(),
+				Path: projectPath,
+			}
+
+			// Optionally add to the Coordinator for dependency management
+			// Example: repoName depends on "base-repo"
+			if entry.Name() != "base-repo" {
+				r.Coordinator.AddDependency(entry.Name(), []string{"base-repo"})
+			}
+
+			fmt.Printf("Repository '%s' discovered and added to the registry.\n", entry.Name())
+		}
+	}
+
+	return nil
+}
+
+// ListItems returns a list of all RegistryItems (repositories).
+func (r *Registry) ListItems() []RegistryItem {
+	return r.RegistryActor.ListItems()
+}
+
+// loadConfig loads configuration settings. Replace this with actual config loading logic as needed.
+func loadConfig() (*Config, error) {
+	// Simulating config loading using hardcoded values for simplicity.
+	// You can integrate Viper or another config library as needed.
+	return &Config{
+		ProjectsPath: "/home/cdaprod/Projects",
+		DockerHost:   "unix:///var/run/docker.sock",
+		LogLevel:     "info",
+	}, nil
+}
+-e 
+=== Path: /home/cdaprod/Projects/go-middleware-registry/registry
+=== File: registry_test.go
+
+// registry_test.go
+package registry
+
+import (
+    "context"
+    "testing"
+    "time"
+)
+
+func TestRegistryBasicOperations(t *testing.T) {
+    // Initialize registry with test configuration
+    registry := NewRegistry[string, string](
+        WithTTL(time.Hour),
+        WithMaxItems(100),
+    )
+
+    // Test context
+    ctx := context.Background()
+
+    // Test cases
+    tests := []struct {
+        name    string
+        key     string
+        value   string
+        wantErr bool
+    }{
+        {
+            name:    "Set and get basic item",
+            key:     "test-key",
+            value:   "test-value",
+            wantErr: false,
+        },
+        {
+            name:    "Get non-existent item",
+            key:     "non-existent",
+            value:   "",
+            wantErr: true,
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            // Test Set operation
+            if tt.value != "" {
+                err := registry.Set(ctx, tt.key, tt.value)
+                if err != nil && !tt.wantErr {
+                    t.Errorf("Set() error = %v, wantErr %v", err, tt.wantErr)
+                    return
+                }
+            }
+
+            // Test Get operation
+            got, err := registry.Get(ctx, tt.key)
+            if (err != nil) != tt.wantErr {
+                t.Errorf("Get() error = %v, wantErr %v", err, tt.wantErr)
+                return
+            }
+
+            // Verify value if no error expected
+            if !tt.wantErr && got.Value != tt.value {
+                t.Errorf("Get() got = %v, want %v", got.Value, tt.value)
+            }
+        })
+    }
+}
+
+func TestRegistryEventSubscription(t *testing.T) {
+    registry := NewRegistry[string, string]()
+    ctx := context.Background()
+
+    // Create channel to receive events
+    events := make(chan Event[string], 1)
+    
+    // Subscribe to registry events
+    registry.Subscribe(func(e Event[string]) {
+        events <- e
+    })
+
+    // Set a value to trigger an event
+    testKey := "event-test"
+    testValue := "test-value"
+    
+    err := registry.Set(ctx, testKey, testValue)
+    if err != nil {
+        t.Fatalf("Failed to set value: %v", err)
+    }
+
+    // Wait for event with timeout
+    select {
+    case event := <-events:
+        if event.Type != EventCreated {
+            t.Errorf("Expected event type %v, got %v", EventCreated, event.Type)
+        }
+        if event.Key != testKey {
+            t.Errorf("Expected key %v, got %v", testKey, event.Key)
+        }
+    case <-time.After(time.Second):
+        t.Error("Timeout waiting for event")
+    }
+}
+-e 
+=== Path: /home/cdaprod/Projects/go-middleware-registry/registry
+=== File: actor.go
+
+// File: registry/actors.go
+package registry
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+)
+
+// Message is the interface for all messages
+type Message interface{}
+
+// Commands for RegistryActor
+type AddRepo struct {
+	Name string
+	Path string
+}
+
+type RemoveRepo struct {
+	Name string
+}
+
+type ScanDir struct {
+	Directory string
+}
+
+type ToggleRepo struct {
+	Name string
+}
+
+type ConfigureRepo struct {
+	Name string
+}
+
+type ReportCompletion struct {
+	Name string
+}
+
+type ConfigureDocker struct{}
+type ConfigurePipeline struct{}
+type InitRepo struct{}
+
+// RepoActor manages an individual repository
+type RepoActor struct {
+	Name        string
+	Path        string
+	Active      bool
+	IsDocker    bool
+	HasPipeline bool
+	MsgChan     chan Message
+	wg          *sync.WaitGroup
+}
+
+// NewRepoActor initializes a new RepoActor
+func NewRepoActor(name, path string, wg *sync.WaitGroup) *RepoActor {
+	return &RepoActor{
+		Name:    name,
+		Path:    path,
+		Active:  true,
+		MsgChan: make(chan Message),
+		wg:      wg,
+	}
+}
+
+// Start launches the RepoActor's goroutine
+func (r *RepoActor) Start() {
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		for msg := range r.MsgChan {
+			switch m := msg.(type) {
+			case ToggleRepo:
+				r.Active = !r.Active
+				fmt.Printf("Repo '%s' toggled to %v\n", r.Name, r.Active)
+			case ConfigureDocker:
+				if r.Active && !r.IsDocker {
+					r.addDockerfile()
+					r.IsDocker = true
+					fmt.Printf("Docker configured for repo '%s'\n", r.Name)
+				}
+			case ConfigurePipeline:
+				if r.Active && !r.HasPipeline {
+					r.setupPipeline()
+					r.HasPipeline = true
+					fmt.Printf("Pipeline configured for repo '%s'\n", r.Name)
+				}
+			case InitRepo:
+				if r.Active {
+					r.initializeRepo()
+				}
+			case ReportCompletion:
+				fmt.Printf("Repo '%s' has completed its task.\n", m.Name)
+			default:
+				fmt.Printf("Repo '%s' received unknown message: %v\n", r.Name, msg)
+			}
+		}
+	}()
+}
+
+// Helper methods for RepoActor
+func (r *RepoActor) addDockerfile() {
+	dockerfilePath := filepath.Join(r.Path, "Dockerfile")
+	content := "FROM alpine:latest\nCMD [\"echo\", \"Hello, Docker!\"]\n"
+	err := os.WriteFile(dockerfilePath, []byte(content), 0644)
+	if err != nil {
+		fmt.Printf("Error adding Dockerfile to '%s': %v\n", r.Name, err)
+	}
+}
+
+func (r *RepoActor) setupPipeline() {
+	pipelinePath := filepath.Join(r.Path, ".github", "workflows", "pipeline.yml")
+	content := "name: CI\non: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v2\n"
+	err := os.MkdirAll(filepath.Dir(pipelinePath), os.ModePerm)
+	if err != nil {
+		fmt.Printf("Error creating pipeline directory for '%s': %v\n", r.Name, err)
+		return
+	}
+	err = os.WriteFile(pipelinePath, []byte(content), 0644)
+	if err != nil {
+		fmt.Printf("Error setting up pipeline for '%s': %v\n", r.Name, err)
+	}
+}
+
+func (r *RepoActor) initializeRepo() {
+	// Simulate repository initialization (e.g., cloning, setting up)
+	fmt.Printf("Initializing repository '%s'...\n", r.Name)
+	time.Sleep(1 * time.Second) // Simulate time-consuming task
+	fmt.Printf("Repository '%s' initialized.\n", r.Name)
+}
+
+// RegistryActor manages all repositories
+type RegistryActor struct {
+	Repos      map[string]*RepoActor
+	MsgChan    chan Message
+	wg         *sync.WaitGroup
+	mutex      sync.Mutex
+}
+
+// NewRegistryActor initializes a new RegistryActor
+func NewRegistryActor(wg *sync.WaitGroup) *RegistryActor {
+	return &RegistryActor{
+		Repos:   make(map[string]*RepoActor),
+		MsgChan: make(chan Message),
+		wg:      wg,
+	}
+}
+
+// Start launches the RegistryActor's goroutine
+func (r *RegistryActor) Start() {
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		for msg := range r.MsgChan {
+			switch m := msg.(type) {
+			case AddRepo:
+				r.addRepo(m.Name, m.Path)
+			case RemoveRepo:
+				r.removeRepo(m.Name)
+			case ScanDir:
+				r.scanDirectory(m.Directory)
+			case ToggleRepo:
+				r.toggleRepo(m.Name)
+			case ConfigureRepo:
+				r.configureRepo(m.Name)
+			default:
+				fmt.Printf("Registry received unknown message: %v\n", msg)
+			}
+		}
+	}()
+}
+
+// Add a new repository
+func (r *RegistryActor) addRepo(name, path string) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	if _, exists := r.Repos[name]; exists {
+		fmt.Printf("Repository '%s' already exists.\n", name)
+		return
+	}
+	repo := NewRepoActor(name, path, r.wg)
+	repo.Start()
+	r.Repos[name] = repo
+	fmt.Printf("Repository '%s' added.\n", name)
+	// Initialize the repo
+	repo.MsgChan <- InitRepo{}
+}
+
+// Remove a repository
+func (r *RegistryActor) removeRepo(name string) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	if repo, exists := r.Repos[name]; exists {
+		repo.MsgChan <- ReportCompletion{Name: name}
+		close(repo.MsgChan)
+		delete(r.Repos, name)
+		fmt.Printf("Repository '%s' removed.\n", name)
+	} else {
+		fmt.Printf("Repository '%s' not found.\n", name)
+	}
+}
+
+// Toggle a repository's active state
+func (r *RegistryActor) toggleRepo(name string) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	if repo, exists := r.Repos[name]; exists {
+		repo.MsgChan <- ToggleRepo{Name: name}
+	} else {
+		fmt.Printf("Repository '%s' not found for toggling.\n", name)
+	}
+}
+
+// Configure a repository
+func (r *RegistryActor) configureRepo(name string) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	if repo, exists := r.Repos[name]; exists {
+		// Example: Configure Docker and Pipeline
+		repo.MsgChan <- ConfigureDocker{}
+		repo.MsgChan <- ConfigurePipeline{}
+	} else {
+		fmt.Printf("Repository '%s' not found for configuration.\n", name)
+	}
+}
+
+// Scan a directory for repositories
+func (r *RegistryActor) scanDirectory(directory string) {
+	fmt.Printf("Scanning directory '%s' for repositories...\n", directory)
+	err := filepath.Walk(directory, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() && info.Name() == ".git" {
+			repoPath := filepath.Dir(path)
+			repoName := filepath.Base(repoPath)
+			r.MsgChan <- AddRepo{Name: repoName, Path: repoPath}
+		}
+		return nil
+	})
+	if err != nil {
+		fmt.Printf("Error scanning directory: %v\n", err)
+	}
+}
+
+// ListItems returns a slice of all RegistryItems.
+func (r *RegistryActor) ListItems() []RegistryItem {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	items := make([]RegistryItem, 0, len(r.Repos))
+	for _, repo := range r.Repos {
+		item := RegistryItem{
+			ID:            repo.Name,
+			Name:          repo.Name,
+			Type:          "repository",
+			Status:        "active",
+			Path:          repo.Path,
+			CreatedAt:     time.Now(), // Placeholder
+			LastUpdated:   time.Now(), // Placeholder
+			Enabled:       repo.Active,
+			GitRepo:       nil,         // Placeholder
+			HasDockerfile: repo.IsDocker,
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+// CoordinatorActor manages dependencies and graph-based progression (Optional)
+type CoordinatorActor struct {
+	Graph      map[string][]string // Dependencies: key depends on values
+	Completed  map[string]bool
+	MsgChan    chan RepoCompleted
+	wg         *sync.WaitGroup
+	registry   *RegistryActor
+	mutex      sync.Mutex
+}
+
+// RepoCompleted message signifies a repo has completed its task
+type RepoCompleted struct {
+	Name string
+}
+
+// NewCoordinatorActor initializes a new CoordinatorActor
+func NewCoordinatorActor(wg *sync.WaitGroup, registry *RegistryActor) *CoordinatorActor {
+	return &CoordinatorActor{
+		Graph:     make(map[string][]string),
+		Completed: make(map[string]bool),
+		MsgChan:   make(chan RepoCompleted),
+		wg:        wg,
+		registry:  registry,
+	}
+}
+
+// Start launches the CoordinatorActor's goroutine
+func (c *CoordinatorActor) Start() {
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		for msg := range c.MsgChan {
+			c.handleCompletion(msg)
+		}
+	}()
+}
+
+// AddDependency adds a dependency to the graph
+func (c *CoordinatorActor) AddDependency(repo string, dependsOn []string) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.Graph[repo] = dependsOn
+}
+
+// handleCompletion processes the completion of a repository task
+func (c *CoordinatorActor) handleCompletion(msg RepoCompleted) {
+	c.mutex.Lock()
+	c.Completed[msg.Name] = true
+	fmt.Printf("Coordinator: Repository '%s' completed.\n", msg.Name)
+
+	// Check which repositories can now proceed
+	for repo, deps := range c.Graph {
+		if c.Completed[repo] {
+			continue // Already completed
+		}
+		allDepsMet := true
+		for _, dep := range deps {
+			if !c.Completed[dep] {
+				allDepsMet = false
+				break
+			}
+		}
+		if allDepsMet {
+			fmt.Printf("Coordinator: All dependencies met for '%s'. Proceeding...\n", repo)
+			// Send a message to configure the repo
+			c.registry.Repos[repo].MsgChan <- ConfigureDocker{}
+			c.registry.Repos[repo].MsgChan <- ConfigurePipeline{}
+			c.Completed[repo] = true // Mark as processed
+		}
+	}
+
+	c.mutex.Unlock()
+}
+-e 
+=== Path: /home/cdaprod/Projects/go-middleware-registry
+=== File: main.go
+
+// File: main.go (Graceful Shutdown)
+package main
+
+import (
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/Cdaprod/go-middleware-registry/internal/ui"
+	"github.com/Cdaprod/go-middleware-registry/registry"
+	"github.com/spf13/cobra"
+)
+
+// Global Registry instance
+var globalRegistry *registry.Registry
+
+// Root command for the CLI application.
+var rootCmd = &cobra.Command{
+	Use:   "registry",
+	Short: "Registry CLI for managing repositories",
+	Long:  "A CLI application for managing repositories in /home/cdaprod/Projects with support for Git repositories and Docker containers.",
+}
+
+var listCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all repositories",
+	Run: func(cmd *cobra.Command, args []string) {
+		if globalRegistry == nil {
+			fmt.Println("Registry not initialized.")
+			os.Exit(1)
+		}
+		items := globalRegistry.ListItems()
+		displayTable(items)
+	},
+}
+
+var scanCmd = &cobra.Command{
+	Use:   "scan",
+	Short: "Scan projects directory for repositories",
+	Run: func(cmd *cobra.Command, args []string) {
+		if globalRegistry == nil {
+			fmt.Println("Registry not initialized.")
+			os.Exit(1)
+		}
+		globalRegistry.Actor.MsgChan <- ScanDir{Directory: globalRegistry.Config.ProjectsPath}
+		fmt.Printf("Scan initiated for directory: %s\n", globalRegistry.Config.ProjectsPath)
+	},
+}
+
+var infoCmd = &cobra.Command{
+	Use:   "info [repository]",
+	Short: "Show detailed information about a repository",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		if globalRegistry == nil {
+			fmt.Println("Registry not initialized.")
+			os.Exit(1)
+		}
+
+		item, exists := globalRegistry.Actor.Repos[args[0]]
+		if !exists {
+			fmt.Printf("Repository '%s' not found\n", args[0])
+			os.Exit(1)
+		}
+
+		displayRepoInfo(item)
+	},
+}
+
+var interactiveCmd = &cobra.Command{
+	Use:   "interactive",
+	Short: "Launch interactive TUI",
+	Run: func(cmd *cobra.Command, args []string) {
+		if globalRegistry == nil {
+			fmt.Println("Registry not initialized.")
+			os.Exit(1)
+		}
+
+		if err := ui.LaunchTUI(globalRegistry); err != nil {
+			fmt.Printf("Error starting TUI: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
+var toggleCmd = &cobra.Command{
+	Use:   "toggle [repository]",
+	Short: "Toggle a repository's active state",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		if globalRegistry == nil {
+			fmt.Println("Registry not initialized.")
+			os.Exit(1)
+		}
+
+		globalRegistry.Actor.MsgChan <- ToggleRepo{Name: args[0]}
+		fmt.Printf("Toggle command sent for repository: %s\n", args[0])
+	},
+}
+
+var configureCmd = &cobra.Command{
+	Use:   "configure [repository]",
+	Short: "Configure a repository with Docker and Pipeline",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		if globalRegistry == nil {
+			fmt.Println("Registry not initialized.")
+			os.Exit(1)
+		}
+
+		globalRegistry.Actor.MsgChan <- ConfigureRepo{Name: args[0]}
+		fmt.Printf("Configure command sent for repository: %s\n", args[0])
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(listCmd)
+	rootCmd.AddCommand(scanCmd)
+	rootCmd.AddCommand(infoCmd)
+	rootCmd.AddCommand(interactiveCmd)
+	rootCmd.AddCommand(toggleCmd)
+	rootCmd.AddCommand(configureCmd)
+}
+
+func main() {
+	var err error
+	globalRegistry, err = registry.NewRegistry()
+	if err != nil {
+		fmt.Printf("Error initializing registry: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Handle graceful shutdown
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		fmt.Println("\nShutting down gracefully...")
+		close(globalRegistry.Actor.MsgChan)
+		globalRegistry.actorWg.Wait()
+		os.Exit(0)
+	}()
+
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+}
+
+// displayTable prints the list of registry items in a table format.
+func displayTable(items []registry.RegistryItem) {
+	fmt.Println("Displaying items in table format:")
+	for _, item := range items {
+		status := "Disabled"
+		if item.Enabled {
+			status = "Enabled"
+		}
+		fmt.Printf(" - %s: %s [%s]\n", item.Name, item.Path, status)
+	}
+}
+
+// displayRepoInfo prints detailed information about a specific repository.
+func displayRepoInfo(item registry.RegistryItem) {
+	fmt.Printf("Repository Information:\n")
+	fmt.Printf("  Name:          %s\n", item.Name)
+	fmt.Printf("  Path:          %s\n", item.Path)
+	fmt.Printf("  Type:          %s\n", item.Type)
+	fmt.Printf("  Status:        %s\n", item.Status)
+	fmt.Printf("  Created:       %s\n", item.CreatedAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("  Last Updated:  %s\n", item.LastUpdated.Format("2006-01-02 15:04:05"))
+	fmt.Printf("  Has Dockerfile: %v\n", item.HasDockerfile)
+
+	if item.GitRepo != nil {
+		head, err := item.GitRepo.Head()
+		if err == nil {
+			fmt.Printf("  Current Branch: %s\n", head.Name().Short())
+		}
+
+		remotes, err := item.GitRepo.Remotes()
+		if err == nil {
+			fmt.Printf("  Remotes:\n")
+			for _, remote := range remotes {
+				fmt.Printf("    - %s: %s\n", remote.Config().Name, remote.Config().URLs[0])
+			}
+		}
+	}
+}
+-e 
+=== Path: /home/cdaprod/Projects/go-middleware-registry/internal/ui
+=== File: docker_manager.go
+
+// File: internal/ui/docker_manager.go
+package ui
+
+import (
+    "encoding/json"
+    "bufio"
+    "bytes"
+    "context"
+    "fmt"
+    "io"
+    "os"
+    "path/filepath"
+    "strings"
+    "sync"
+    "time"
+    "archive/tar"
+    
+    tea "github.com/charmbracelet/bubbletea"
+    "github.com/charmbracelet/bubbles/spinner"
+    "github.com/charmbracelet/bubbles/viewport"
+    "github.com/docker/docker/api/types"
+    "github.com/docker/docker/api/types/container"
+    "github.com/docker/docker/client"
+    "github.com/Cdaprod/go-middleware-registry/registry"
+)
+
+const (
+    MsgTypeError   = "error"
+    MsgTypeSuccess = "success"
+    MsgTypeInfo    = "info"
+    MsgTypeWarning = "warning"
+)
+
+// Message types
+type (
+    buildCompleteMsg struct {
+        repoName string
+        success  bool
+        error    error
+    }
+
+    containerStartedMsg struct {
+        containerID string
+        error      error
+    }
+
+    containerStoppedMsg struct {
+        containerID string
+        error      error
+    }
+
+    logsUpdatedMsg struct {
+        containerID string
+        logs       string
+        error      error
+    }
+
+    statsUpdatedMsg struct {
+        containerID string
+        stats      containerStats
+        error      error
+    }
+)
+
+// Stats tracking
+type containerStats struct {
+    CPUPercentage    float64
+    MemoryUsage      float64
+    MemoryLimit      float64
+    NetworkRx        float64
+    NetworkTx        float64
+    RunningProcesses int64
+}
+
+// Container view representation
+type containerView struct {
+    ID        string
+    Name      string
+    Status    string
+    Logs      string
+    Stats     containerStats
+    Selected  bool
+    viewport  viewport.Model
+}
+
+// DockerManager handles all Docker operations
+type DockerManager struct {
+    // Core components
+    client     *client.Client
+    registry   *registry.Registry
+    containers *ContainerManager
+    
+    // State tracking
+    activeRepo   string
+    containerID  string
+    status      map[string]string
+    logs        map[string]string
+    
+    // UI components
+    menu       *Menu
+    viewports  map[string]viewport.Model
+    spinners   map[string]spinner.Model
+    operations map[string]string
+    
+    // Dimensions
+    width    int
+    height   int
+    
+    mu      sync.Mutex
+}
+
+func NewDockerManager(reg *registry.Registry) (*DockerManager, error) {
+    docker, err := client.NewClientWithOpts(client.FromEnv)
+    if err != nil {
+        return nil, fmt.Errorf("failed to create docker client: %w", err)
+    }
+
+    containers, err := NewContainerManager()
+    if err != nil {
+        return nil, fmt.Errorf("failed to create container manager: %w", err)
+    }
+
+    return &DockerManager{
+        client:     docker,
+        registry:   reg,
+        containers: containers,
+        status:     make(map[string]string),
+        logs:      make(map[string]string),
+        viewports: make(map[string]viewport.Model),
+        spinners:  make(map[string]spinner.Model),
+        operations: make(map[string]string),
+    }, nil
+}
+
+// Operation initiation
+func (dm *DockerManager) startOperation(id, operation string) {
+    dm.mu.Lock()
+    defer dm.mu.Unlock()
+
+    s := spinner.New()
+    s.Spinner = spinner.Dot
+    s.Style = spinnerStyle
+    dm.spinners[id] = s
+    dm.operations[id] = operation
+}
+
+// UI Update handling
+func (dm *DockerManager) Update(msg tea.Msg) tea.Cmd {
+    var cmds []tea.Cmd
+
+    switch msg := msg.(type) {
+    case tea.KeyMsg:
+        if dm.menu != nil && dm.menu.Visible {
+            menu, cmd := dm.menu.Update(msg)
+            dm.menu = menu
+            if cmd != nil {
+                cmds = append(cmds, cmd)
+            }
+        } else if dm.containers != nil {
+            cmd := dm.containers.Update(msg)
+            if cmd != nil {
+                cmds = append(cmds, cmd)
+            }
+        }
+
+    case menuMsg:
+        switch msg.Type {
+        case "select":
+            cmd := dm.handleMenuAction(msg.Action)
+            if cmd != nil {
+                cmds = append(cmds, cmd)
+            }
+        case "close":
+            dm.menu = nil
+        }
+
+    case dockerMsg:
+        cmd := dm.handleDockerMessage(msg)
+        if cmd != nil {
+            cmds = append(cmds, cmd)
+        }
+
+    case buildCompleteMsg:
+        delete(dm.spinners, msg.repoName)
+        delete(dm.operations, msg.repoName)
+        if msg.error != nil {
+            return dm.showError(msg.error)
+        }
+        return dm.showSuccess(fmt.Sprintf("Built image for %s", msg.repoName))
+
+    case containerStartedMsg:
+        if msg.error != nil {
+            return dm.showError(msg.error)
+        }
+        dm.containerID = msg.containerID
+        return dm.showSuccess(fmt.Sprintf("Started container %s", msg.containerID))
+
+    case logsUpdatedMsg:
+        if c, exists := dm.containers.containers[msg.containerID]; exists {
+            c.Logs = msg.logs
+            if vp, ok := dm.viewports[msg.containerID]; ok {
+                vp.SetContent(msg.logs)
+                dm.viewports[msg.containerID] = vp
+            }
+        }
+
+    case statsUpdatedMsg:
+        if c, exists := dm.containers.containers[msg.containerID]; exists {
+            c.Stats = msg.stats
+        }
+    }
+
+    // Update spinners
+    for id, s := range dm.spinners {
+        var cmd tea.Cmd
+        s, cmd = s.Update(msg)
+        dm.spinners[id] = s
+        cmds = append(cmds, cmd)
+    }
+
+    return tea.Batch(cmds...)
+}
+
+// View renders the Docker manager UI
+func (dm *DockerManager) View() string {
+    var b strings.Builder
+
+    // Show active operations with spinners
+    for id, operation := range dm.operations {
+        if spinner, ok := dm.spinners[id]; ok {
+            b.WriteString(fmt.Sprintf("%s %s...\n", spinner.View(), operation))
+        }
+    }
+
+    // Show running containers
+    if len(dm.containers.containers) > 0 {
+        b.WriteString("\nRunning Containers:\n")
+        for _, c := range dm.containers {
+            style := containerStyle
+            if c.Selected {
+                style = activeContainerStyle
+            }
+
+            stats := fmt.Sprintf("CPU: %.1f%% | MEM: %.1f/%.1fMB | Procs: %d",
+                c.Stats.CPUPercentage,
+                c.Stats.MemoryUsage/1024/1024,
+                c.Stats.MemoryLimit/1024/1024,
+                c.Stats.RunningProcesses,
+            )
+
+            content := fmt.Sprintf("%s\n%s\n%s", c.ID[:12], c.Status, stats)
+            b.WriteString(style.Render(content) + "\n")
+
+            // Show logs if container is selected
+            if c.Selected {
+                if vp, ok := dm.viewports[c.ID]; ok {
+                    b.WriteString(vp.View() + "\n")
+                }
+            }
+        }
+    }
+
+    return b.String()
+}
+
+func calculateCPUPercentage(stats *types.Stats) float64 {
+    cpuDelta := float64(stats.CPUStats.CPUUsage.TotalUsage) - float64(stats.PreCPUStats.CPUUsage.TotalUsage)
+    systemDelta := float64(stats.CPUStats.SystemUsage) - float64(stats.PreCPUStats.SystemUsage)
+
+    if systemDelta > 0.0 && cpuDelta > 0.0 {
+        return (cpuDelta / systemDelta) * float64(len(stats.CPUStats.CPUUsage.PercpuUsage)) * 100.0
+    }
+    return 0.0
+}
+
+func (dm *DockerManager) showSuccess(message string) tea.Cmd {
+    return func() tea.Msg {
+        return statusMsg{
+            Type:    "success",
+            Message: message,
+        }
+    }
+}
+
+func (dm *DockerManager) showError(err error) tea.Cmd {
+    return func() tea.Msg {
+        return statusMsg{
+            Type:    "error",
+            Message: err.Error(),
+        }
+    }
+}
+func (dm *DockerManager) ShowOperationsMenu(repoName string) tea.Cmd {
+    dm.activeRepo = repoName
+    dm.menu = DockerOperationsMenu(repoName)
+    return nil
+}
+
+func (dm *DockerManager) handleMenuAction(action string) tea.Cmd {
+    switch action {
+    case "run":
+        return dm.runContainer
+    case "build":
+        return dm.buildImage
+    case "logs":
+        return dm.viewLogs
+    case "stop":
+        return dm.stopContainer
+    case "remove":
+        return dm.removeContainer
+    }
+    return nil
+}
+
+// In docker_manager.go, add these implementations:
+
+// Docker operations implementation
+func (dm *DockerManager) runContainer() tea.Msg {
+    ctx := context.Background()
+    
+    if dm.activeRepo == "" {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: "No repository selected",
+        }
+    }
+
+    // Create container configuration
+    config := &container.Config{
+        Image: dm.activeRepo + ":latest",
+        Tty:   true,
+    }
+
+    // Create container
+    resp, err := dm.client.ContainerCreate(ctx, config, nil, nil, nil, "")
+    if err != nil {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: fmt.Sprintf("Failed to create container: %v", err),
+        }
+    }
+
+    // Start container
+    if err := dm.client.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: fmt.Sprintf("Failed to start container: %v", err),
+        }
+    }
+
+    // Add to container manager
+    dm.containers.AddContainer(&ContainerView{
+        id:   resp.ID,
+        name: dm.activeRepo,
+    })
+
+    return dockerMsg{
+        Type:        MsgTypeSuccess,
+        Message:     "Container started successfully",
+        ContainerID: resp.ID,
+    }
+}
+
+func (dm *DockerManager) buildImage() tea.Msg {
+    ctx := context.Background()
+
+    if dm.activeRepo == "" {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: "No repository selected",
+        }
+    }
+
+    // Create build context tar
+    buildCtx, err := createBuildContext(dm.activeRepo)
+    if err != nil {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: fmt.Sprintf("Failed to create build context: %v", err),
+        }
+    }
+
+    // Build options
+    options := types.ImageBuildOptions{
+        Tags:       []string{dm.activeRepo + ":latest"},
+        Dockerfile: "Dockerfile",
+    }
+
+    // Build the image
+    response, err := dm.client.ImageBuild(ctx, buildCtx, options)
+    if err != nil {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: fmt.Sprintf("Failed to build image: %v", err),
+        }
+    }
+    defer response.Body.Close()
+
+    // Read build output
+    var output strings.Builder
+    scanner := bufio.NewScanner(response.Body)
+    for scanner.Scan() {
+        output.WriteString(scanner.Text() + "\n")
+    }
+
+    return dockerMsg{
+        Type:    MsgTypeSuccess,
+        Message: "Image built successfully",
+        Data:    output.String(),
+    }
+}
+
+func (dm *DockerManager) viewLogs() tea.Msg {
+    if dm.activeRepo == "" || dm.containerID == "" {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: "No active container",
+        }
+    }
+
+    logs, err := dm.containers.GetContainerLogs(dm.containerID)
+    if err != nil {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: fmt.Sprintf("Failed to get logs: %v", err),
+        }
+    }
+
+    return dockerMsg{
+        Type:        MsgTypeSuccess,
+        ContainerID: dm.containerID,
+        Data:        logs,
+    }
+}
+
+func (dm *DockerManager) stopContainer() tea.Msg {
+    ctx := context.Background()
+
+    if dm.containerID == "" {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: "No active container",
+        }
+    }
+
+    timeout := int(10)
+    err := dm.client.ContainerStop(ctx, dm.containerID, container.StopOptions{Timeout: &timeout})
+    if err != nil {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: fmt.Sprintf("Failed to stop container: %v", err),
+        }
+    }
+
+    return dockerMsg{
+        Type:        MsgTypeSuccess,
+        Message:     "Container stopped successfully",
+        ContainerID: dm.containerID,
+    }
+}
+
+func (dm *DockerManager) removeContainer() tea.Msg {
+    ctx := context.Background()
+
+    if dm.containerID == "" {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: "No active container",
+        }
+    }
+
+    err := dm.client.ContainerRemove(ctx, dm.containerID, types.ContainerRemoveOptions{
+        Force: true,
+    })
+    if err != nil {
+        return dockerMsg{
+            Type:    MsgTypeError,
+            Message: fmt.Sprintf("Failed to remove container: %v", err),
+        }
+    }
+
+    // Remove from container manager
+    dm.containers.RemoveContainer(dm.containerID)
+
+    return dockerMsg{
+        Type:    MsgTypeSuccess,
+        Message: "Container removed successfully",
+    }
+}
+
+func (dm *DockerManager) handleDockerMessage(msg dockerMsg) tea.Cmd {
+    switch msg.Type {
+    case MsgTypeError:
+        return func() tea.Msg {
+            return statusMsg{
+                Type:    "error",
+                Message: msg.Message,
+            }
+        }
+    case MsgTypeSuccess:
+        if msg.ContainerID != "" {
+            dm.containerID = msg.ContainerID
+        }
+        return func() tea.Msg {
+            return statusMsg{
+                Type:    "success",
+                Message: msg.Message,
+            }
+        }
+    }
+    return nil
+}
+
+// Helper function to create build context
+func createBuildContext(repoPath string) (io.Reader, error) {
+    var buf bytes.Buffer
+    tw := tar.NewWriter(&buf)
+
+    // Walk through the repository directory
+    err := filepath.Walk(repoPath, func(path string, info os.FileInfo, err error) error {
+        if err != nil {
+            return err
+        }
+
+        // Create tar header
+        header, err := tar.FileInfoHeader(info, info.Name())
+        if err != nil {
+            return err
+        }
+
+        // Update header name to be relative to repo path
+        relPath, err := filepath.Rel(repoPath, path)
+        if err != nil {
+            return err
+        }
+        header.Name = relPath
+
+        // Write header
+        if err := tw.WriteHeader(header); err != nil {
+            return err
+        }
+
+        // If not a directory, write file content
+        if !info.IsDir() {
+            file, err := os.Open(path)
+            if err != nil {
+                return err
+            }
+            defer file.Close()
+
+            if _, err := io.Copy(tw, file); err != nil {
+                return err
+            }
+        }
+
+        return nil
+    })
+
+    if err != nil {
+        return nil, err
+    }
+
+    // Close tar writer
+    if err := tw.Close(); err != nil {
+        return nil, err
+    }
+
+    return &buf, nil
+}
+
+func (dm *DockerManager) SelectContainer(containerID string) {
+    dm.mu.Lock()
+    defer dm.mu.Unlock()
+    
+    // Deselect all containers first
+    for _, c := range dm.containers.containers {
+        c.Selected = false
+    }
+    
+    // Select the specified container
+    if container, exists := dm.containers.containers[containerID]; exists {
+        container.Selected = true
+        // Create viewport if doesn't exist
+        if _, ok := dm.viewports[containerID]; !ok {
+            vp := viewport.New(dm.width-4, 10) // Adjust height as needed
+            vp.Style = viewportStyle
+            dm.viewports[containerID] = vp
+        }
+    }
+}
+
+// Add this function
+func (dm *DockerManager) monitorContainer(containerID string) {
+    // Start stats monitoring
+    go dm.monitorStats(containerID)
+    
+    // Start logs monitoring
+    go func() {
+        ctx := context.Background()
+        options := types.ContainerLogsOptions{
+            ShowStdout: true,
+            ShowStderr: true,
+            Follow:     true,
+            Timestamps: true,
+        }
+
+        logs, err := dm.client.ContainerLogs(ctx, containerID, options)
+        if err != nil {
+            return
+        }
+        defer logs.Close()
+
+        scanner := bufio.NewScanner(logs)
+        for scanner.Scan() {
+            dm.mu.Lock()
+            if container, exists := dm.containers.containers[containerID]; exists {
+                container.Logs += scanner.Text() + "\n"
+                if vp, ok := dm.viewports[containerID]; ok {
+                    vp.SetContent(container.Logs)
+                    dm.viewports[containerID] = vp
+                }
+            }
+            dm.mu.Unlock()
+        }
+    }()
+}
+-e 
+=== Path: /home/cdaprod/Projects/go-middleware-registry/internal/ui
+=== File: styles.go
+
+// File: internal/ui/styles.go
+package ui
+
+import (
+    "github.com/charmbracelet/lipgloss"
+)
+
+var (
+    // Color scheme
+    primaryColor    = lipgloss.Color("#874BFD")
+    secondaryColor  = lipgloss.Color("#7D56F4")
+    successColor    = lipgloss.Color("#04B575")
+    warningColor    = lipgloss.Color("#FFA629")
+    errorColor      = lipgloss.Color("#FF0000")
+    textColor       = lipgloss.Color("#FFFFFF")
+    dimmedColor     = lipgloss.Color("#666666")
+    highlightColor  = lipgloss.AdaptiveColor{Light: "#874BFD", Dark: "#7D56F4"}
+    backgroundColor = lipgloss.Color("#1A1A1A")
+
+    // Base styles
+    docStyle = lipgloss.NewStyle().
+        Padding(1, 2, 1, 2).
+        Background(backgroundColor)
+
+    // Tab styles
+    inactiveTabBorder = tabBorderWithBottom("┴", "─", "┴")
+    activeTabBorder   = tabBorderWithBottom("┘", " ", "└")
+
+    tabStyle = lipgloss.NewStyle().
+        Border(inactiveTabBorder, true).
+        BorderForeground(primaryColor).
+        Padding(0, 1).
+        Background(backgroundColor)
+
+    activeTabStyle = tabStyle.Copy().
+        Border(activeTabBorder, true).
+        Bold(true).
+        Foreground(textColor)
+
+    // Window and container styles
+    windowStyle = lipgloss.NewStyle().
+        BorderForeground(primaryColor).
+        Padding(2, 0).
+        Border(lipgloss.NormalBorder()).
+        UnsetBorderTop().
+        Background(backgroundColor)
+
+    containerStyle = lipgloss.NewStyle().
+        Border(lipgloss.RoundedBorder()).
+        BorderForeground(primaryColor).
+        Padding(0, 1).
+        Background(backgroundColor)
+
+    activeContainerStyle = containerStyle.Copy().
+        BorderForeground(successColor).
+        Bold(true)
+
+    // Docker-specific styles
+    dockerMenuStyle = lipgloss.NewStyle().
+        Border(lipgloss.RoundedBorder()).
+        BorderForeground(primaryColor).
+        Padding(1, 2).
+        Background(backgroundColor)
+
+    dockerPopupStyle = lipgloss.NewStyle().
+        Border(lipgloss.RoundedBorder()).
+        BorderForeground(primaryColor).
+        Padding(1, 2).
+        Background(backgroundColor)
+
+    // List styles
+    listHeaderStyle = lipgloss.NewStyle().
+        Bold(true).
+        Foreground(primaryColor).
+        Padding(0, 1)
+
+    listItemStyle = lipgloss.NewStyle().
+        Padding(0, 1)
+
+    selectedItemStyle = listItemStyle.Copy().
+        Background(primaryColor).
+        Foreground(textColor)
+
+    // Message styles
+    errorStyle = lipgloss.NewStyle().
+        Foreground(errorColor).
+        Bold(true).
+        Padding(0, 1)
+
+    successStyle = lipgloss.NewStyle().
+        Foreground(successColor).
+        Bold(true).
+        Padding(0, 1)
+
+    warningStyle = lipgloss.NewStyle().
+        Foreground(warningColor).
+        Bold(true).
+        Padding(0, 1)
+
+    infoStyle = lipgloss.NewStyle().
+        Foreground(primaryColor).
+        Padding(0, 1)
+
+    // Help and status styles
+    helpStyle = lipgloss.NewStyle().
+        Foreground(dimmedColor).
+        Padding(1, 0)
+
+    statusStyle = lipgloss.NewStyle().
+        Foreground(textColor).
+        Background(primaryColor).
+        Padding(0, 1)
+
+    // Spinner style
+    spinnerStyle = lipgloss.NewStyle().
+        Foreground(primaryColor).
+        Bold(true)
+
+    // Container monitoring styles
+    monitorHeaderStyle = lipgloss.NewStyle().
+        Bold(true).
+        Foreground(primaryColor).
+        Padding(0, 1).
+        BorderStyle(lipgloss.RoundedBorder()).
+        BorderForeground(primaryColor)
+
+    monitorDataStyle = lipgloss.NewStyle().
+        Foreground(textColor).
+        Padding(0, 2)
+
+    statsStyle = lipgloss.NewStyle().
+        Border(lipgloss.RoundedBorder()).
+        BorderForeground(primaryColor).
+        Padding(1)
+
+    // Log styles
+    logStyle = lipgloss.NewStyle().
+        Border(lipgloss.RoundedBorder()).
+        BorderForeground(primaryColor).
+        Padding(0, 1).
+        MaxHeight(10)
+
+    logEntryStyle = lipgloss.NewStyle().
+        Foreground(textColor)
+
+    logErrorStyle = logEntryStyle.Copy().
+        Foreground(errorColor)
+
+    logSuccessStyle = logEntryStyle.Copy().
+        Foreground(successColor)
+
+    // Button styles
+    buttonStyle = lipgloss.NewStyle().
+        Padding(0, 3).
+        Bold(true)
+
+    activeButtonStyle = buttonStyle.Copy().
+        Background(primaryColor).
+        Foreground(textColor)
+
+    // Dialog styles
+    dialogStyle = lipgloss.NewStyle().
+        Border(lipgloss.RoundedBorder()).
+        BorderForeground(primaryColor).
+        Padding(1, 2).
+        Background(backgroundColor)
+
+    dialogTitleStyle = lipgloss.NewStyle().
+        Bold(true).
+        Foreground(primaryColor)
+
+    // Layout helpers
+    dividerStyle = lipgloss.NewStyle().
+        Foreground(dimmedColor).
+        SetString("─").
+        Padding(0, 1)
+
+    indentStyle = lipgloss.NewStyle().
+        PaddingLeft(2)
+)
+
+// Helper functions
+func tabBorderWithBottom(left, middle, right string) lipgloss.Border {
+    border := lipgloss.RoundedBorder()
+    border.BottomLeft = left
+    border.Bottom = middle
+    border.BottomRight = right
+    return border
+}
+
+// Utility functions for common text styling
+func Subtle(s string) string {
+    return lipgloss.NewStyle().Foreground(dimmedColor).Render(s)
+}
+
+func Highlight(s string) string {
+    return lipgloss.NewStyle().Foreground(primaryColor).Bold(true).Render(s)
+}
+
+func Emphasis(s string) string {
+    return lipgloss.NewStyle().Bold(true).Render(s)
+}
+
+// Layout helper functions
+func JoinHorizontal(styles ...string) string {
+    return lipgloss.JoinHorizontal(lipgloss.Top, styles...)
+}
+
+func JoinVertical(styles ...string) string {
+    return lipgloss.JoinVertical(lipgloss.Left, styles...)
+}
+
+func Divider() string {
+    return dividerStyle.Render(strings.Repeat("─", 50))
+}
+-e 
+=== Path: /home/cdaprod/Projects/go-middleware-registry/internal/ui
+=== File: tui.go
+
+// File: internal/ui/tui.go
+package ui
+
+import (
+    "fmt"
+    "strings"
+    "time"
+
+    "github.com/Cdaprod/go-middleware-registry/registry"
+    "github.com/charmbracelet/bubbles/list"
+    "github.com/charmbracelet/bubbles/spinner"
+    "github.com/charmbracelet/bubbles/viewport"
+    tea "github.com/charmbracelet/bubbletea"
+    "github.com/charmbracelet/lipgloss"
+)
+
+// Message types
+type (
+    dockerMsg struct {
+        Type    string // "error", "success", "info"
+        Message string
+        Data    interface{}
+    }
+
+    clearMessageMsg struct{}
+
+    operationCompleteMsg struct {
+        success bool
+        message string
+    }
+)
+
+// UI States
+type viewState int
+
+const (
+    normalState viewState = iota
+    dockerMenuState
+    containerViewState
+)
+
+// model represents the TUI state
+type model struct {
+    // Core components
+    Tabs      []string
+    activeTab int
+    registry  *registry.Registry
+    lists     []list.Model
+    state     viewState
+
+    // Docker components
+    dockerManager  *DockerManager
+    activeRepo     string
+    dockerMenu    *MenuModel
+    containerView *ContainerViewModel
+
+    // UI components
+    spinner  spinner.Model
+    viewport viewport.Model
+    width    int
+    height   int
+
+    // Messages
+    errorMsg   string
+    successMsg string
+    loading    bool
+}
+
+// List item implementation
+type listItem struct {
+    title string
+    desc  string
+}
+
+func (i listItem) Title() string       { return i.title }
+func (i listItem) Description() string { return i.desc }
+func (i listItem) FilterValue() string { return i.title }
+
+// NewModel initializes the TUI
+func NewModel(reg *registry.Registry) (model, error) {
+    dockerManager, err := NewDockerManager(reg)
+    if err != nil {
+        return model{}, err
+    }
+
+    s := spinner.New()
+    s.Spinner = spinner.Dot
+    s.Style = spinnerStyle
+
+    m := model{
+        Tabs: []string{
+            "Registrar Operations",
+            "Repositories",
+            "Docker",
+            "Configurations",
+        },
+        registry:      reg,
+        dockerManager: dockerManager,
+        state:        normalState,
+        spinner:      s,
+    }
+
+    // Initialize lists
+    m.lists = make([]list.Model, len(m.Tabs))
+    m.initializeLists()
+
+    return m, nil
+}
+
+func (m *model) initializeLists() {
+    // Registrar Operations
+    registrarItems := []list.Item{
+        listItem{title: "Add Repository", desc: "Add a new repository to the registry"},
+        listItem{title: "Scan Projects", desc: "Scan for new repositories"},
+        listItem{title: "List All", desc: "List all registered repositories"},
+        listItem{title: "Toggle Repository", desc: "Enable/disable a repository"},
+        listItem{title: "Configure Repository", desc: "Configure repository settings"},
+    }
+    m.lists[0] = createList(registrarItems, "Registrar Operations")
+
+    // Repositories
+    var repoItems []list.Item
+    for _, item := range m.registry.ListItems() {
+        icon := "📁"
+        if item.HasDockerfile {
+            icon = "🐳"
+        } else if item.GitRepo != nil {
+            icon = "󰊤"
+        }
+        repoItems = append(repoItems, listItem{
+            title: fmt.Sprintf("%s %s", icon, item.Name),
+            desc:  item.Path,
+        })
+    }
+    m.lists[1] = createList(repoItems, "Repositories")
+
+    // Docker Operations (will be populated dynamically)
+    m.lists[2] = createList([]list.Item{}, "Docker Operations")
+
+    // Configurations
+    configItems := []list.Item{
+        listItem{title: "Global Settings", desc: "Configure global registry settings"},
+        listItem{title: "Docker Settings", desc: "Configure Docker integration settings"},
+        listItem{title: "Export Data", desc: "Export registry data"},
+    }
+    m.lists[3] = createList(configItems, "Configurations")
+}
+
+func createList(items []list.Item, title string) list.Model {
+    l := list.New(items, list.NewDefaultDelegate(), 0, 0)
+    l.Title = title
+    l.SetShowHelp(false)
+    return l
+}
+
+// Init initializes the program
+func (m model) Init() tea.Cmd {
+    return tea.Batch(
+        m.spinner.Tick,
+        checkDockerStatus(m.registry),
+    )
+}
+
+// Update handles all UI updates
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+    var cmds []tea.Cmd
+
+    switch msg := msg.(type) {
+    case tea.KeyMsg:
+        switch msg.String() {
+        case "ctrl+c", "q":
+            return m, tea.Quit
+        case "esc":
+            if m.state != normalState {
+                m.state = normalState
+                return m, nil
+            }
+        default:
+            switch m.state {
+            case normalState:
+                cmds = append(cmds, m.handleNormalState(msg)...)
+            case dockerMenuState:
+                cmds = append(cmds, m.handleDockerMenu(msg)...)
+            case containerViewState:
+                cmds = append(cmds, m.handleContainerView(msg)...)
+            }
+        }
+
+    case tea.WindowSizeMsg:
+        m.width = msg.Width
+        m.height = msg.Height
+        m.updateComponentSizes()
+
+    case dockerMsg:
+        cmds = append(cmds, m.handleDockerMsg(msg)...)
+
+    case operationCompleteMsg:
+        m.loading = false
+        if msg.success {
+            m.successMsg = msg.message
+        } else {
+            m.errorMsg = msg.message
+        }
+        cmds = append(cmds, m.clearMessageAfterDelay())
+
+    case spinner.TickMsg:
+        var cmd tea.Cmd
+        m.spinner, cmd = m.spinner.Update(msg)
+        cmds = append(cmds, cmd)
+
+    case clearMessageMsg:
+        m.errorMsg = ""
+        m.successMsg = ""
+    }
+
+    // Update active list
+    if m.state == normalState && m.activeTab < len(m.lists) {
+        var cmd tea.Cmd
+        m.lists[m.activeTab], cmd = m.lists[m.activeTab].Update(msg)
+        if cmd != nil {
+            cmds = append(cmds, cmd)
+        }
+    }
+
+    return m, tea.Batch(cmds...)
+}
+
+// Handle different states
+func (m model) handleNormalState(msg tea.KeyMsg) []tea.Cmd {
+    var cmds []tea.Cmd
+    
+    switch msg.String() {
+    case "tab":
+        m.activeTab = (m.activeTab + 1) % len(m.Tabs)
+    case "shift+tab":
+        m.activeTab = (m.activeTab - 1 + len(m.Tabs)) % len(m.Tabs)
+    case "enter":
+        cmds = append(cmds, m.handleSelection()...)
+    }
+    
+    return cmds
+}
+
+func (m model) handleDockerMenu(msg tea.KeyMsg) []tea.Cmd {
+    // Docker menu navigation and selection
+    return nil
+}
+
+func (m model) handleContainerView(msg tea.KeyMsg) []tea.Cmd {
+    // Container view navigation and interaction
+    return nil
+}
+
+// View renders the UI
+func (m model) View() string {
+    var b strings.Builder
+
+    // Render tabs
+    var renderedTabs []string
+    for i, t := range m.Tabs {
+        style := inactiveTabStyle
+        if i == m.activeTab {
+            style = activeTabStyle
+        }
+        renderedTabs = append(renderedTabs, style.Render(t))
+    }
+    
+    b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, renderedTabs...))
+    b.WriteString("\n")
+
+    // Render main content
+    mainContent := ""
+    switch m.state {
+    case normalState:
+        if m.activeTab < len(m.lists) {
+            mainContent = m.lists[m.activeTab].View()
+        }
+    case dockerMenuState:
+        mainContent = m.dockerMenu.View()
+    case containerViewState:
+        mainContent = m.containerView.View()
+    }
+
+    if m.loading {
+        mainContent = fmt.Sprintf("%s Loading...", m.spinner.View())
+    }
+
+    b.WriteString(windowStyle.
+        Width(m.width-4).
+        Height(m.height-7).
+        Render(mainContent))
+
+    // Render messages
+    if m.errorMsg != "" {
+        b.WriteString("\n" + errorStyle.Render(m.errorMsg))
+    }
+    if m.successMsg != "" {
+        b.WriteString("\n" + successStyle.Render(m.successMsg))
+    }
+
+    // Render help
+    help := "\n" + helpStyle.Render("tab: switch view • enter: select • esc: back • q: quit")
+    b.WriteString(help)
+
+    return docStyle.Render(b.String())
+}
+
+// Utility functions
+func (m *model) updateComponentSizes() {
+    for i := range m.lists {
+        m.lists[i].SetSize(m.width-4, m.height-7)
+    }
+    
+    if m.dockerMenu != nil {
+        m.dockerMenu.SetSize(m.width-4, m.height-7)
+    }
+    
+    if m.containerView != nil {
+        m.containerView.SetSize(m.width-4, m.height-7)
+    }
+}
+
+func (m *model) handleSelection() []tea.Cmd {
+    var cmds []tea.Cmd
+    
+    selected := m.lists[m.activeTab].SelectedItem()
+    if selected == nil {
+        return nil
+    }
+
+    item := selected.(listItem)
+    
+    switch m.activeTab {
+    case 0: // Registrar Operations
+        cmds = append(cmds, m.handleRegistrarOperation(item.title))
+    case 1: // Repositories
+        cmds = append(cmds, m.handleRepositorySelection(item))
+    case 2: // Docker Operations
+        cmds = append(cmds, m.handleDockerOperation(item))
+    case 3: // Configurations
+        cmds = append(cmds, m.handleConfigOperation(item))
+    }
+    
+    return cmds
+}
+
+func (m model) handleDockerMsg(msg dockerMsg) []tea.Cmd {
+    var cmds []tea.Cmd
+    
+    switch msg.Type {
+    case "error":
+        m.errorMsg = msg.Message
+        cmds = append(cmds, m.clearMessageAfterDelay())
+    case "success":
+        m.successMsg = msg.Message
+        cmds = append(cmds, m.clearMessageAfterDelay())
+    case "container-started":
+        m.state = containerViewState
+        m.containerView = NewContainerViewModel(msg.Data.(string))
+    }
+    
+    return cmds
+}
+
+func (m model) clearMessageAfterDelay() tea.Cmd {
+    return tea.Tick(time.Second*3, func(time.Time) tea.Msg {
+        return clearMessageMsg{}
+    })
+}
+
+// Operation handlers
+func (m *model) handleRegistrarOperation(operation string) tea.Cmd {
+    m.loading = true
+    return func() tea.Msg {
+        var success bool
+        var message string
+        
+        switch operation {
+        case "Add Repository":
+            // Implementation
+            success = true
+            message = "Repository added successfully"
+        case "Scan Projects":
+            err := m.registry.ScanRepositories()
+            success = err == nil
+            message = "Scan completed"
+            if !success {
+                message = fmt.Sprintf("Scan failed: %v", err)
+            }
+        }
+        
+        return operationCompleteMsg{success: success, message: message}
+    }
+}
+
+func (m *model) handleRepositorySelection(item listItem) tea.Cmd {
+    if strings.Contains(item.title, "🐳") {
+        m.activeRepo = strings.TrimPrefix(item.title, "🐳 ")
+        m.state = dockerMenuState
+        m.dockerMenu = NewDockerMenu(m.activeRepo)
+        return nil
+    }
+    return nil
+}
+
+func (m *model) handleDockerOperation(item listItem) tea.Cmd {
+    return nil
+}
+
+func (m *model) handleConfigOperation(item listItem) tea.Cmd {
+    return nil
+}
+
+// LaunchTUI starts the TUI
+func LaunchTUI(reg *registry.Registry) error {
+    m, err := NewModel(reg)
+    if err != nil {
+        return err
+    }
+
+    p := tea.NewProgram(m, tea.WithAltScreen())
+    _, err = p.Run()
+    return err
+}
+
+// Helper function to check Docker status
+func checkDockerStatus(reg *registry.Registry) tea.Cmd {
+    return func() tea.Msg {
+        // Implementation
+        return nil
+    }
+}
+-e 
+=== Path: /home/cdaprod/Projects/go-middleware-registry/internal/ui
+=== File: messages.go
+
+// File: internal/ui/messages.go
+package ui
+
+// Message types for various UI components
+type (
+    // Docker-related messages
+    dockerMsg struct {
+        Type        string // "error", "success", "info", "status"
+        Message     string
+        ContainerID string
+        Data        interface{}
+    }
+
+    // Container-related messages
+    containerMsg struct {
+        ID     string
+        Output string
+        Status string
+        Error  error
+    }
+
+    // UI state messages
+    clearMessageMsg struct{}
+    
+    loadingMsg struct {
+        Active  bool
+        Message string
+    }
+
+    // Operation messages
+    operationCompleteMsg struct {
+        Success bool
+        Message string
+        Data    interface{}
+    }
+
+    execFinishedMsg struct {
+        Error error
+        Data  interface{}
+    }
+
+    // Menu-related messages
+    menuMsg struct {
+        Type    string
+        Action  string
+        ItemID  string
+        Data    interface{}
+    }
+
+    // Status update messages
+    statusMsg struct {
+        Type    string
+        Message string
+    }
+)
+
+// Message type constants
+const (
+    // Docker message types
+    MsgTypeError    = "error"
+    MsgTypeSuccess  = "success"
+    MsgTypeInfo     = "info"
+    MsgTypeWarning  = "warning"
+    MsgTypeStatus   = "status"
+    
+    // Container states
+    ContainerStarted = "started"
+    ContainerStopped = "stopped"
+    ContainerError   = "error"
+    
+    // Menu actions
+    MenuActionSelect = "select"
+    MenuActionClose  = "close"
+    MenuActionUpdate = "update"
+)
+-e 
+=== Path: /home/cdaprod/Projects/go-middleware-registry/internal/ui
+=== File: menu.go
+
+// File: internal/ui/menu.go
+package ui
+
+import (
+    "strings"
+    tea "github.com/charmbracelet/bubbletea"
+)
+
+// MenuItem represents a menu option
+type MenuItem struct {
+    Title       string
+    Description string
+    Icon        string
+    Action      string
+    Disabled    bool
+}
+
+// Menu represents a popup menu component
+type Menu struct {
+    Title       string
+    Items       []MenuItem
+    Selected    int
+    Width       int
+    Height      int
+    Visible     bool
+    Style       string // "docker", "container", "default"
+}
+
+func NewMenu(title string, items []MenuItem, style string) *Menu {
+    return &Menu{
+        Title:    title,
+        Items:    items,
+        Style:    style,
+        Visible:  true,
+        Selected: 0,
+    }
+}
+
+func (m *Menu) Update(msg tea.Msg) (*Menu, tea.Cmd) {
+    switch msg := msg.(type) {
+    case tea.KeyMsg:
+        switch msg.String() {
+        case "up", "k":
+            m.Selected = max(0, m.Selected-1)
+        case "down", "j":
+            m.Selected = min(len(m.Items)-1, m.Selected+1)
+        case "enter":
+            if !m.Items[m.Selected].Disabled {
+                return m, func() tea.Msg {
+                    return menuMsg{
+                        Type:   "select",
+                        Action: m.Items[m.Selected].Action,
+                    }
+                }
+            }
+        case "esc":
+            m.Visible = false
+            return m, func() tea.Msg {
+                return menuMsg{Type: "close"}
+            }
+        }
+    }
+    return m, nil
+}
+
+func (m Menu) View() string {
+    if !m.Visible {
+        return ""
+    }
+
+    var content strings.Builder
+    
+    // Apply style based on menu type
+    style := menuStyle
+    if m.Style == "docker" {
+        style = dockerMenuStyle
+    }
+
+    // Render title
+    content.WriteString(menuTitleStyle.Render(m.Title) + "\n\n")
+
+    // Render items
+    for i, item := range m.Items {
+        itemStyle := menuItemStyle
+        if i == m.Selected {
+            itemStyle = selectedMenuItemStyle
+        }
+        if item.Disabled {
+            itemStyle = disabledMenuItemStyle
+        }
+
+        // Format item with icon if present
+        itemText := item.Title
+        if item.Icon != "" {
+            itemText = item.Icon + " " + itemText
+        }
+
+        // Add selection indicator
+        if i == m.Selected {
+            itemText = "> " + itemText
+        } else {
+            itemText = "  " + itemText
+        }
+
+        content.WriteString(itemStyle.Render(itemText))
+        if item.Description != "" {
+            content.WriteString("\n" + Subtle(item.Description))
+        }
+        content.WriteString("\n")
+    }
+
+    // Add help text
+    content.WriteString("\n" + helpStyle.Render("↑/↓: navigate • enter: select • esc: cancel"))
+
+    // Render with appropriate style and size
+    return style.Width(m.Width).Render(content.String())
+}
+
+// Predefined menu configurations
+func DockerOperationsMenu(repoName string) *Menu {
+    items := []MenuItem{
+        {Title: "Run Container", Icon: "🚀", Action: "run"},
+        {Title: "Build Image", Icon: "📦", Action: "build"},
+        {Title: "View Logs", Icon: "📝", Action: "logs"},
+        {Title: "Stop Container", Icon: "⏹️", Action: "stop"},
+        {Title: "Remove Container", Icon: "🗑️", Action: "remove"},
+        {Title: "Cancel", Icon: "❌", Action: "cancel"},
+    }
+    return NewMenu("Docker Operations: "+repoName, items, "docker")
+}
+
+func ContainerActionsMenu() *Menu {
+    items := []MenuItem{
+        {Title: "View Details", Icon: "🔍", Action: "details"},
+        {Title: "Shell Access", Icon: "💻", Action: "shell"},
+        {Title: "View Logs", Icon: "📝", Action: "logs"},
+        {Title: "Restart", Icon: "🔄", Action: "restart"},
+        {Title: "Stop", Icon: "⏹️", Action: "stop"},
+        {Title: "Remove", Icon: "🗑️", Action: "remove"},
+    }
+    return NewMenu("Container Actions", items, "container")
+}
+-e 
+=== Path: /home/cdaprod/Projects/go-middleware-registry/internal/ui
+=== File: container_views.go
+
+// File: internal/ui/container_views.go
+package ui
+
+import (
+    "fmt"
+    "os/exec"
+    "strings"
+
+    tea "github.com/charmbracelet/bubbletea"
+    "github.com/charmbracelet/bubbles/viewport"
+    "github.com/charmbracelet/lipgloss"
+    "github.com/docker/docker/client"
+)
+
+// View states
+type viewState int
+
+const (
+    containerListView viewState = iota
+    containerShellView
+    containerLogsView
+)
+
+// Messages
+type containerMsg struct {
+    id     string
+    output string
+}
+
+type execFinishedMsg struct {
+    err error
+}
+
+// Styles
+var (
+    containerStyle = lipgloss.NewStyle().
+        BorderStyle(lipgloss.RoundedBorder()).
+        BorderForeground(lipgloss.Color("#874BFD")).
+        Padding(1, 2)
+
+    activeContainerStyle = containerStyle.Copy().
+        BorderForeground(lipgloss.Color("#00FF00"))
+
+    shellStyle = lipgloss.NewStyle().
+        Border(lipgloss.RoundedBorder()).
+        BorderForeground(lipgloss.Color("#874BFD")).
+        Margin(1, 2).
+        Padding(1, 2)
+
+    titleStyle = lipgloss.NewStyle().
+        Foreground(lipgloss.Color("#874BFD")).
+        Bold(true)
+)
+
+// ContainerView represents a single container view
+type ContainerView struct {
+    id       string
+    name     string
+    viewport viewport.Model
+    shell    *exec.Cmd
+    logs     string
+    active   bool
+}
+
+// ContainerManager manages multiple container views
+type ContainerManager struct {
+    containers []*ContainerView
+    active     int
+    state      viewState
+    docker     *client.Client
+    width      int
+    height     int
+}
+
+func NewContainerManager() (*ContainerManager, error) {
+    docker, err := client.NewClientWithOpts(client.FromEnv)
+    if err != nil {
+        return nil, err
+    }
+
+    return &ContainerManager{
+        docker: docker,
+        state:  containerListView,
+    }, nil
+}
+
+// OpenShell opens an interactive shell in the container
+func (cv *ContainerView) OpenShell() tea.Cmd {
+    return func() tea.Msg {
+        cmd := exec.Command("docker", "exec", "-it", cv.id, "/bin/sh")
+        return tea.ExecProcess(cmd, func(err error) tea.Msg {
+            return execFinishedMsg{err}
+        })
+    }
+}
+
+// Update handles container view updates
+func (cm *ContainerManager) Update(msg tea.Msg) tea.Cmd {
+    var cmds []tea.Cmd
+
+    switch msg := msg.(type) {
+    case tea.KeyMsg:
+        switch msg.String() {
+        case "tab":
+            // Cycle through views
+            cm.state = (cm.state + 1) % 3
+        case "shift+tab":
+            // Cycle backwards
+            if cm.state == 0 {
+                cm.state = 2
+            } else {
+                cm.state--
+            }
+        case "j", "down":
+            // Next container
+            if cm.active < len(cm.containers)-1 {
+                cm.active++
+            }
+        case "k", "up":
+            // Previous container
+            if cm.active > 0 {
+                cm.active--
+            }
+        case "enter":
+            // Open shell for active container
+            if cm.state == containerListView && len(cm.containers) > 0 {
+                cm.state = containerShellView
+                return cm.containers[cm.active].OpenShell()
+            }
+        case "l":
+            // View logs
+            if cm.state == containerListView && len(cm.containers) > 0 {
+                cm.state = containerLogsView
+                return cm.fetchLogs(cm.containers[cm.active].id)
+            }
+        }
+
+    case execFinishedMsg:
+        if msg.err != nil {
+            // Handle shell error
+            return nil
+        }
+
+    case containerMsg:
+        // Update container logs
+        for _, c := range cm.containers {
+            if c.id == msg.id {
+                c.logs = msg.output
+                break
+            }
+        }
+    }
+
+    return tea.Batch(cmds...)
+}
+
+// View renders the appropriate view based on state
+func (cm *ContainerManager) View() string {
+    switch cm.state {
+    case containerListView:
+        return cm.listView()
+    case containerShellView:
+        return cm.shellView()
+    case containerLogsView:
+        return cm.logsView()
+    default:
+        return "Unknown view state"
+    }
+}
+
+func (cm *ContainerManager) listView() string {
+    var b strings.Builder
+
+    b.WriteString(titleStyle.Render("Container List"))
+    b.WriteString("\n\n")
+
+    for i, container := range cm.containers {
+        style := containerStyle
+        if i == cm.active {
+            style = activeContainerStyle
+        }
+
+        info := fmt.Sprintf("%s\n%s", container.name, container.id[:12])
+        b.WriteString(style.Render(info) + "\n")
+    }
+
+    b.WriteString("\n" + helpStyle.Render("j/k: navigate • enter: shell • l: logs • tab: switch view • q: quit"))
+    return b.String()
+}
+
+func (cm *ContainerManager) shellView() string {
+    if len(cm.containers) == 0 || cm.active >= len(cm.containers) {
+        return "No container selected"
+    }
+
+    container := cm.containers[cm.active]
+    return shellStyle.Render(fmt.Sprintf("Shell: %s\n\n%s", 
+        container.name,
+        container.viewport.View(),
+    ))
+}
+
+func (cm *ContainerManager) logsView() string {
+    if len(cm.containers) == 0 || cm.active >= len(cm.containers) {
+        return "No container selected"
+    }
+
+    container := cm.containers[cm.active]
+    return shellStyle.Render(fmt.Sprintf("Logs: %s\n\n%s",
+        container.name,
+        container.logs,
+    ))
+}
+
+// fetchLogs retrieves container logs
+func (cm *ContainerManager) fetchLogs(containerID string) tea.Cmd {
+    return func() tea.Msg {
+        ctx := context.Background()
+        options := types.ContainerLogsOptions{
+            ShowStdout: true,
+            ShowStderr: true,
+            Follow:     false,
+            Tail:       "100",
+        }
+
+        logs, err := cm.docker.ContainerLogs(ctx, containerID, options)
+        if err != nil {
+            return containerMsg{id: containerID, output: fmt.Sprintf("Error fetching logs: %v", err)}
+        }
+        defer logs.Close()
+
+        buf := new(strings.Builder)
+        _, err = io.Copy(buf, logs)
+        if err != nil {
+            return containerMsg{id: containerID, output: fmt.Sprintf("Error reading logs: %v", err)}
+        }
+
+        return containerMsg{id: containerID, output: buf.String()}
+    }
+}
+
+type model struct {
+    // Core components
+    Tabs      []string
+    activeTab int
+    registry  *registry.Registry
+    lists     []list.Model
+    state     viewState
+
+    // Docker components
+    dockerManager  *DockerManager
+    activeRepo     string
+    dockerMenu    *MenuModel
+    containerView *ContainerViewModel
+    containerManager *ContainerManager
+
+    // UI components
+    spinner  spinner.Model
+    viewport viewport.Model
+    width    int
+    height   int
+
+    // Messages
+    errorMsg   string
+    successMsg string
+    loading    bool
+}
+
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+    var cmds []tea.Cmd
+
+    switch msg := msg.(type) {
+    case tea.KeyMsg:
+        if m.dockerPopup != nil && m.dockerPopup.visible {
+            // ... existing docker popup handling ...
+        } else if msg.String() == "c" {
+            // Toggle container manager view
+            cmd := m.containerManager.Update(msg)
+            if cmd != nil {
+                cmds = append(cmds, cmd)
+            }
+        }
+    }
+
+    // ... rest of update logic ...
+
+    return m, tea.Batch(cmds...)
+}
+
+
+—-
+
+go build -o binaries/reg-v3 main.go
+# github.com/Cdaprod/go-middleware-registry/registry
+registry/docker.go:27:23: r.Items undefined (type *Registry has no field or method Items)
+registry/docker.go:64:23: r.Items undefined (type *Registry has no field or method Items)
+registry/docker.go:144:16: undefined: strings
+registry/docker.go:164:15: undefined: json
+registry/registry.go:96:3: declared and not used: info
+registry/registry.go:104:3: declared and not used: repo
+registry/registry.go:109:3: declared and not used: hasDockerfile
+
+To resolve the build errors in your Go project go-middleware-registry diligently and correctly, follow the steps below. These steps address each of the errors you’ve encountered by ensuring that the code references are accurate, necessary imports are included, and unused variables are handled appropriately.
+
+1. Add Missing Imports in registry/docker.go
+
+The build errors indicate that the strings and json packages are used but not imported. To fix this, you need to add these imports to the docker.go file.
+
+Original registry/docker.go Imports:
+
+package registry
+
+import (
+    "context"
+    "fmt"
+    "io"
+    "os"
+    "path/filepath"
+
+    "github.com/docker/docker/api/types"
+    "github.com/docker/docker/api/types/container"
+    "github.com/docker/docker/api/types/filters"
+)
+
+Updated registry/docker.go Imports:
+
+package registry
+
+import (
+    "context"
+    "fmt"
+    "io"
+    "os"
+    "path/filepath"
+    "strings"          // Added import
+    "encoding/json"    // Added import
+
+    "github.com/docker/docker/api/types"
+    "github.com/docker/docker/api/types/container"
+    "github.com/docker/docker/api/types/filters"
+)
+
+2. Replace Undefined Items with RegistryActor.Repos in registry/docker.go
+
+The errors r.Items undefined indicate that the Registry struct does not have an Items field. Instead, repositories are managed within RegistryActor.Repos. You need to update the references accordingly.
+
+Original Code in registry/docker.go:
+
+// GetDockerInfo retrieves Docker-related information for a repository
+func (r *Registry) GetDockerInfo(repoName string) (*DockerInfo, error) {
+    item, exists := r.Items[repoName]
+    if !exists {
+        return nil, fmt.Errorf("repository not found: %s", repoName)
+    }
+
+    info := &DockerInfo{
+        HasDockerfile: item.HasDockerfile,
+    }
+
+    if !item.HasDockerfile {
+        return info, nil
+    }
+
+    // Get image information
+    imageName := fmt.Sprintf("%s:latest", item.Name)
+    images, err := r.Docker.ImageList(context.Background(), types.ImageListOptions{
+        Filters: filters.NewArgs(filters.Arg("reference", imageName)),
+    })
+    if err == nil && len(images) > 0 {
+        info.ImageID = images[0].ID
+        info.ImageTags = images[0].RepoTags
+    }
+
+    // Get container information
+    containers, err := r.Docker.ContainerList(context.Background(), types.ContainerListOptions{
+        All: true,
+        Filters: filters.NewArgs(filters.Arg("ancestor", imageName)),
+    })
+    if err == nil {
+        info.Containers = containers
+    }
+
+    return info, nil
+}
+
+Updated Code in registry/docker.go:
+
+// GetDockerInfo retrieves Docker-related information for a repository
+func (r *Registry) GetDockerInfo(repoName string) (*DockerInfo, error) {
+    // Access the repository from RegistryActor.Repos
+    repo, exists := r.RegistryActor.Repos[repoName]
+    if !exists {
+        return nil, fmt.Errorf("repository not found: %s", repoName)
+    }
+
+    info := &DockerInfo{
+        HasDockerfile: repo.IsDocker, // Updated field
+    }
+
+    if !repo.IsDocker {
+        return info, nil
+    }
+
+    // Get image information
+    imageName := fmt.Sprintf("%s:latest", repo.Name) // Updated field
+    images, err := r.Docker.ImageList(context.Background(), types.ImageListOptions{
+        Filters: filters.NewArgs(filters.Arg("reference", imageName)),
+    })
+    if err == nil && len(images) > 0 {
+        info.ImageID = images[0].ID
+        info.ImageTags = images[0].RepoTags
+    }
+
+    // Get container information
+    containers, err := r.Docker.ContainerList(context.Background(), types.ContainerListOptions{
+        All: true,
+        Filters: filters.NewArgs(filters.Arg("ancestor", imageName)),
+    })
+    if err == nil {
+        info.Containers = containers
+    }
+
+    return info, nil
+}
+
+Explanation:
+
+	•	Accessing Repositories Correctly: Replace r.Items[repoName] with r.RegistryActor.Repos[repoName] to correctly reference the repositories managed by RegistryActor.
+	•	Field Adjustments: Update the field references from item.Name and item.HasDockerfile to repo.Name and repo.IsDocker, respectively, as per the RepoActor struct.
+
+3. Handle Unused Variables in registry/registry.go
+
+The build errors indicate that variables info, repo, and hasDockerfile are declared but not used. To fix this, you need to either use these variables appropriately or remove their declarations if they’re unnecessary.
+
+Original Code in registry/registry.go:
+
+// discoverRepositories scans the ProjectsPath for Git repositories and adds them to the registry.
+func (r *Registry) discoverRepositories() error {
+    entries, err := os.ReadDir(r.Config.ProjectsPath)
+    if err != nil {
+        return fmt.Errorf("failed to read projects directory: %w", err)
+    }
+
+    for _, entry := range entries {
+        if !entry.IsDir() {
+            continue
+        }
+
+        // Use entry.Info() to retrieve os.FileInfo
+        info, err := entry.Info()
+        if err != nil {
+            return fmt.Errorf("failed to retrieve file info: %w", err)
+        }
+
+        projectPath := filepath.Join(r.Config.ProjectsPath, entry.Name())
+
+        // Check if it's a git repository
+        repo, err := git.PlainOpen(projectPath)
+        isGitRepo := err == nil
+
+        // Check for Dockerfile
+        _, dockerfileErr := os.Stat(filepath.Join(projectPath, "Dockerfile"))
+        hasDockerfile := dockerfileErr == nil
+
+        if isGitRepo {
+            // Add the repository to the RegistryActor
+            r.RegistryActor.MsgChan <- AddRepo{
+                Name: entry.Name(),
+                Path: projectPath,
+            }
+
+            // Optionally add to the Coordinator for dependency management
+            // Example: repoName depends on "base-repo"
+            if entry.Name() != "base-repo" {
+                r.Coordinator.AddDependency(entry.Name(), []string{"base-repo"})
+            }
+
+            fmt.Printf("Repository '%s' discovered and added to the registry.\n", entry.Name())
+        }
+    }
+
+    return nil
+}
+
+Updated Code in registry/registry.go:
+
+// discoverRepositories scans the ProjectsPath for Git repositories and adds them to the registry.
+func (r *Registry) discoverRepositories() error {
+    entries, err := os.ReadDir(r.Config.ProjectsPath)
+    if err != nil {
+        return fmt.Errorf("failed to read projects directory: %w", err)
+    }
+
+    for _, entry := range entries {
+        if !entry.IsDir() {
+            continue
+        }
+
+        projectPath := filepath.Join(r.Config.ProjectsPath, entry.Name())
+
+        // Check if it's a git repository
+        _, err := git.PlainOpen(projectPath)
+        isGitRepo := err == nil
+
+        // Check for Dockerfile
+        _, dockerfileErr := os.Stat(filepath.Join(projectPath, "Dockerfile"))
+        hasDockerfile := dockerfileErr == nil
+
+        if isGitRepo {
+            // Add the repository to the RegistryActor
+            r.RegistryActor.MsgChan <- AddRepo{
+                Name: entry.Name(),
+                Path: projectPath,
+            }
+
+            // Optionally add to the Coordinator for dependency management
+            // Example: repoName depends on "base-repo"
+            if entry.Name() != "base-repo" {
+                r.Coordinator.AddDependency(entry.Name(), []string{"base-repo"})
+            }
+
+            fmt.Printf("Repository '%s' discovered and added to the registry.\n", entry.Name())
+        }
+    }
+
+    return nil
+}
+
+Explanation:
+
+	•	Removed Unused Variables:
+	•	info: Removed the declaration info, err := entry.Info() and its related error handling since info was not used.
+	•	repo: Removed the declaration repo, err := git.PlainOpen(projectPath) and directly used the result to set isGitRepo.
+	•	hasDockerfile: If hasDockerfile is not used elsewhere, you can remove its declaration. However, if it’s intended for future use (e.g., to set IsDocker in RepoActor), consider integrating it appropriately. For now, assuming it’s not used, it can be removed.
+	•	Conditional Checks: Retained the checks for isGitRepo and hasDockerfile to ensure repositories are correctly identified and handled.
+
+4. (Optional) Ensure RegistryActor.Repos is Properly Initialized
+
+Although not directly related to the build errors, it’s good practice to ensure that the Repos map within RegistryActor is initialized to avoid potential runtime panics.
+
+Ensure Initialization in NewRegistry:
+
+// NewRegistry initializes and returns a new Registry instance.
+func NewRegistry() (*Registry, error) {
+    config, err := loadConfig()
+    if err != nil {
+        return nil, fmt.Errorf("failed to load config: %w", err)
+    }
+
+    docker, err := client.NewClientWithOpts(client.FromEnv)
+    if err != nil {
+        return nil, fmt.Errorf("failed to create docker client: %w", err)
+    }
+
+    wg := &sync.WaitGroup{}
+
+    // Initialize RegistryActor and Coordinator
+    registryActor := NewRegistryActor(wg)
+    coordinator := NewCoordinatorActor(wg, registryActor)
+
+    reg := &Registry{
+        RegistryActor: registryActor,
+        Coordinator:   coordinator,
+        Docker:        docker,
+        Config:        config,
+        wg:            wg,
+    }
+
+    // Auto-discover repositories
+    if err := reg.discoverRepositories(); err != nil {
+        return nil, fmt.Errorf("failed to discover repositories: %w", err)
+    }
+
+    // Start RegistryActor and Coordinator
+    reg.RegistryActor.Start()
+    reg.Coordinator.Start()
+
+    return reg, nil
+}
+
+Ensure NewRegistryActor Initializes Repos:
+
+// NewRegistryActor initializes a new RegistryActor
+func NewRegistryActor(wg *sync.WaitGroup) *RegistryActor {
+    return &RegistryActor{
+        Repos:   make(map[string]*RepoActor), // Ensure Repos is initialized
+        MsgChan: make(chan Message),
+        wg:      wg,
+    }
+}
+
+5. Rebuild the Project
+
+After making the above changes, attempt to rebuild the project to ensure that all errors have been resolved.
+
+go build -o binaries/reg-v3 main.go
+
+6. Verify Additional Dependencies and Code Logic
+
+While the above steps address the immediate build errors, it’s essential to verify that:
+
+	•	RepoActor Fields are Properly Managed: Ensure that fields like IsDocker are correctly set based on the presence of a Dockerfile.
+	•	Concurrency and Synchronization: Given that actors and goroutines are used (RegistryActor, CoordinatorActor, etc.), ensure that proper synchronization mechanisms (like mutexes) are in place to prevent race conditions.
+	•	Handle Potential Nil References: Ensure that accessing r.RegistryActor.Repos[repoName] does not result in nil pointer dereferences. Add appropriate error handling where necessary.
+	•	Implement createBuildContext Function: The createBuildContext function in registry/docker.go currently returns nil, nil. Implement this function to create a proper tar archive of the build context for Docker image building.
+
+Example Implementation of createBuildContext:
+
+// Utility functions
+func createBuildContext(contextPath string) (io.Reader, error) {
+    var buf bytes.Buffer
+    tw := tar.NewWriter(&buf)
+
+    // Walk through the repository directory
+    err := filepath.Walk(contextPath, func(path string, info os.FileInfo, err error) error {
+        if err != nil {
+            return err
+        }
+
+        // Create tar header
+        header, err := tar.FileInfoHeader(info, info.Name())
+        if err != nil {
+            return err
+        }
+
+        // Update header name to be relative to contextPath
+        relPath, err := filepath.Rel(contextPath, path)
+        if err != nil {
+            return err
+        }
+        header.Name = relPath
+
+        // Write header
+        if err := tw.WriteHeader(header); err != nil {
+            return err
+        }
+
+        // If not a directory, write file content
+        if !info.IsDir() {
+            file, err := os.Open(path)
+            if err != nil {
+                return err
+            }
+            defer file.Close()
+
+            if _, err := io.Copy(tw, file); err != nil {
+                return err
+            }
+        }
+
+        return nil
+    })
+
+    if err != nil {
+        return nil, err
+    }
+
+    // Close tar writer
+    if err := tw.Close(); err != nil {
+        return nil, err
+    }
+
+    return &buf, nil
+}
+
+7. Final Code Review
+
+After applying the above fixes, perform a thorough code review to ensure that:
+
+	•	All References are Correct: Ensure that all struct fields and method calls correctly reference existing fields and methods.
+	•	Proper Error Handling: Verify that errors are appropriately handled and propagated.
+	•	Code Consistency and Style: Ensure that the code follows Go best practices and is consistently styled.
+
+Summary of Changes
+
+	1.	Added Missing Imports:
+	•	strings
+	•	encoding/json
+	2.	Replaced r.Items with r.RegistryActor.Repos in registry/docker.go.
+	3.	Removed Unused Variable Declarations in registry/registry.go:
+	•	info
+	•	repo
+	•	hasDockerfile
+	4.	Ensured Proper Initialization of RegistryActor.Repos.
+	5.	Implemented createBuildContext Function Properly.
+	6.	Performed a Rebuild to Confirm Resolution of Errors.
+
+By following these steps, you should be able to resolve the build errors and ensure that your project compiles successfully. If you encounter further issues, consider revisiting the specific error messages and applying similar diligent debugging and code corrections.
+
+---
+
+Let’s compare both approaches and their effects on the system, particularly the baseRepoAdded flag approach and the name-based ("base-repo") approach.
+
+1. BaseRepoAdded Flag Approach
+
+Code Logic:
+
+// Track whether "self" or "base-repo" has been added
+baseRepoAdded := false
+
+for _, entry := range entries {
+    if !entry.IsDir() {
+        continue
+    }
+
+    projectPath := filepath.Join(r.Config.ProjectsPath, entry.Name())
+
+    // Check if it's a git repository
+    _, err := git.PlainOpen(projectPath)
+    isGitRepo := err == nil
+
+    if isGitRepo {
+        // Add the repository to the RegistryActor
+        r.RegistryActor.MsgChan <- AddRepo{
+            Name: entry.Name(),
+            Path: projectPath,
+        }
+
+        // Optionally add to the Coordinator for dependency management
+        // Treat the first instance as "self" (base repo) and the rest normally
+        if !baseRepoAdded {
+            r.Coordinator.AddDependency(entry.Name(), []string{}) // No dependencies for the first repo
+            baseRepoAdded = true
+        } else {
+            r.Coordinator.AddDependency(entry.Name(), []string{"base-repo"})
+        }
+    }
+}
+
+Behavior:
+
+	•	First Git Repo: The first valid Git repository found is treated as the base repo. It does not depend on anything else.
+	•	Subsequent Repos: All subsequent repositories depend on this base repo by default.
+	•	Dynamic Selection: The base repo is dynamically assigned to the first repository found, not based on a specific name.
+
+Advantages:
+
+	•	Flexibility: It doesn’t require the repository to have a specific name. The first valid repo becomes the base repo dynamically.
+	•	Consistency: Guarantees that only one repo will be treated as the base, with no chance of accidental duplication.
+
+Drawbacks:
+
+	•	Lack of Control: You can’t explicitly choose which repo is treated as self or base-repo; it’s just the first valid one discovered.
+	•	Less Predictability: If the order of discovery changes, a different repository might be selected as the base repo.
+
+2. Name-Based Approach ("base-repo")
+
+Code Logic:
+
+for _, entry := range entries {
+    if !entry.IsDir() {
+        continue
+    }
+
+    projectPath := filepath.Join(r.Config.ProjectsPath, entry.Name())
+
+    // Check if it's a git repository
+    _, err := git.PlainOpen(projectPath)
+    isGitRepo := err == nil
+
+    if isGitRepo {
+        // Add the repository to the RegistryActor
+        r.RegistryActor.MsgChan <- AddRepo{
+            Name: entry.Name(),
+            Path: projectPath,
+        }
+
+        // Explicitly handle the base-repo or "self"
+        if entry.Name() == "base-repo" {
+            r.Coordinator.AddDependency(entry.Name(), []string{}) // No dependencies
+        } else {
+            r.Coordinator.AddDependency(entry.Name(), []string{"base-repo"})
+        }
+    }
+}
+
+Behavior:
+
+	•	Specific Name: The repository named "base-repo" is always treated as the base repo. No other repository will be treated as self unless it is explicitly named "base-repo."
+	•	Dependencies: All other repositories depend on this specific base-repo.
+
+Advantages:
+
+	•	Explicit Control: You know exactly which repository will be the base (i.e., "base-repo"), regardless of the discovery order.
+	•	Predictability: The process is predictable and controlled based on a naming convention.
+
+Drawbacks:
+
+	•	Less Flexibility: It forces the user to always name the base repo "base-repo". If that convention isn’t followed, the system won’t function as intended.
+	•	Hardcoded Logic: If the base repo name changes in the future, you’ll need to adjust the logic accordingly.
+
+Comparison of Methods
+
+Feature/Aspect	BaseRepoAdded Flag	Name-Based Approach ("base-repo")
+Base Repo Selection	First valid Git repo found is treated as base	Repo with the explicit name "base-repo" is the base
+Flexibility	Highly flexible; no strict naming requirements	Rigid; must follow the "base-repo" naming convention
+Explicit Control	No control; whichever is found first becomes the base	Full control over which repo is treated as the base
+Predictability	Less predictable since the first discovered repo is chosen	Highly predictable due to explicit name matching
+Order of Discovery Dependency	Yes, depends on the order of discovery	No, always depends on the specific name
+Ease of Implementation	Easier to implement since no name matching is required	Slightly more complex due to the name matching logic
+Scalability	Suitable for dynamic systems with multiple repositories	Works well for systems with strict naming conventions
+
+When to Use Each Approach:
+
+	1.	Use the BaseRepoAdded Flag:
+	•	When you want a dynamic system that automatically selects the first repository it finds as the base.
+	•	When you don’t want to enforce a naming convention like "base-repo" but still need to ensure one repo is considered the base.
+	2.	Use the Name-Based Approach:
+	•	When you want explicit control over which repository is the base and don’t want to rely on the order of discovery.
+	•	When you want to ensure predictability by consistently using a repository named "base-repo" as the base, regardless of the scanning order.
+
+Conclusion:
+
+	•	The baseRepoAdded flag approach offers flexibility and dynamic behavior, ideal for systems where repository names can vary, and the discovery order may change. It works well if you don’t need to hard-code specific repository names.
+	•	The name-based approach offers predictability and control, ensuring that a specific repository is always treated as the base. It’s useful when you have a strict naming convention and need consistent behavior.
+	
+---
+Your understanding of the discovery process is generally correct in principle, but let’s dive deeper into the rationale and see how it holds up logically, particularly in terms of structuring a registry with repositories, flags, and discovery processes.
+
+1. Principle of Self as Base Repo (Registry)
+
+	•	Correct Principle: Using self as the base repo makes sense when self represents the core index (the registry itself) from which all other repositories are tracked and managed. In this case, self is not just another repository; it is the foundational structure upon which the system operates, so it must be registered first as the base of the system.
+	•	Implementation Principle: When registering self as the base repo, you ensure that the foundational registry logic and structures are initialized and are present for all subsequent repository operations (local or user-org authenticated). This is crucial because self holds the responsibility for maintaining dependencies, states, and potentially acting as the reference point for coordinating actions between other repositories.
+
+Thus, discovering self as the base repo first is both correct and essential in principle.
+
+2. Discovering Local Repositories (Potentially Registering)
+
+	•	Correct Principle: The second stage in your process is to scan the local environment for other repositories. It’s important to recognize that not all local repositories may be relevant or necessary for registration in the registry.
+	•	Flags and Criteria: You mentioned flags, which is a good principle because you can apply specific criteria or conditions (flags) for whether a local repository should be added to the registry or skipped. This avoids bloating the registry with unnecessary or untracked repositories. Local repositories may have different roles or purposes, so the decision to register them should be based on defined criteria.
+
+The principle of scanning and potentially registering based on flags or conditions ensures flexibility and control in the discovery process, so this principle is correct.
+
+3. Discovering User-Org Authenticated Repositories (Potentially Registering)
+
+	•	Correct Principle: The third stage involves discovering repositories from external sources, such as user-org authenticated repos. These are typically remote repositories that you have access to via authentication. The principle here is similar to local repositories, but with the added layer of authentication and security checks.
+	•	Registration Decision: Again, not all authenticated repositories need to be registered in the registry. The decision to register could depend on various factors such as:
+	•	Their relevance to the current state of the system.
+	•	The need for synchronization with self.
+	•	The specific flags or settings in place.
+
+Since user-org repositories introduce external dependencies and could come with varying trust levels, having a flagged process for selective registration is crucial. This is a sound principle.
+
+Three-Part Process with Flags (Breakdown)
+
+	1.	Discover self:
+	•	Registering self as the base repository ensures that the registry is initialized correctly and is ready to manage dependencies, coordinate actions, and track other repositories.
+	•	Principle: Correct and essential as self is foundational.
+	2.	Discover local repositories:
+	•	Scanning for local repositories and conditionally registering them ensures that only relevant and useful repositories are tracked. Using flags or criteria ensures that the process remains flexible and adaptable.
+	•	Principle: Correct, as it allows flexibility and avoids unnecessary overhead.
+	3.	Discover user-org authenticated repositories:
+	•	External repositories should be discovered with authentication and registered only if necessary. This ensures that the registry only tracks relevant external repositories, considering trust and access criteria.
+	•	Principle: Correct, as it ensures external repos are registered selectively, balancing security and functionality.
+
+Final Considerations:
+
+	•	Flags and Flexibility: Having the ability to use flags or conditions is a strong principle. It ensures you have the flexibility to decide which repositories to register in the system. This guards against unnecessary clutter and ensures that the system is scalable.
+	•	Self as Core Base: Treating self as the core/base registry avoids confusion and maintains a single point of truth for managing dependencies, repositories, and coordination. This prevents errors related to multiple base repositories or ambiguous states.
+	•	Future Scalability: By structuring discovery in these three parts, you allow for a modular and scalable system, where each phase is isolated yet interconnected through the registry (self). This reduces the risk of errors creeping in from external dependencies or uncontrolled local repositories.
+
+Conclusion:
+
+Your principle-based approach to self-discovery, local repo discovery, and user-org repo discovery is solid. It ensures flexibility, control, and modularity within the registry, using flags and conditional registration as key mechanisms for maintaining system coherence. The primary registry (self) as the foundation of the system is essential, and the approach to discovering and selectively registering repositories (local and external) follows good software engineering principles.
+	
+
+ 
