@@ -37,55 +37,87 @@ type Registry struct {
 
 // Config holds the configuration settings for the Registry.
 type Config struct {
-	ProjectsPath string
-	DockerHost   string
-	LogLevel     string
+    ProjectsPath string
+    DockerHost   string
+    LogLevel     string
+}
+
+// OptsFunc defines the function signature for configuration options.
+type OptsFunc func(*Config)
+
+// WithProjectsPath sets the ProjectsPath configuration.
+func WithProjectsPath(path string) OptsFunc {
+    return func(c *Config) {
+        c.ProjectsPath = path
+    }
+}
+
+// WithDockerHost sets the DockerHost configuration.
+func WithDockerHost(host string) OptsFunc {
+    return func(c *Config) {
+        c.DockerHost = host
+    }
+}
+
+// WithLogLevel sets the LogLevel configuration.
+func WithLogLevel(level string) OptsFunc {
+    return func(c *Config) {
+        c.LogLevel = level
+    }
 }
 
 // NewRegistry initializes and returns a new Registry instance.
-func NewRegistry() (*Registry, error) {
-	config, err := loadConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to load config: %w", err)
-	}
+func NewRegistry(opts ...OptsFunc) (*Registry, error) {
+    // Set default configuration values.
+    config := &Config{
+        ProjectsPath: "/home/cdaprod/Projects",
+        DockerHost:   "unix:///var/run/docker.sock",
+        LogLevel:     "info",
+    }
 
-	docker, err := client.NewClientWithOpts(client.FromEnv)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create docker client: %w", err)
-	}
+    // Apply options.
+    for _, opt := range opts {
+        opt(config)
+    }
 
-	wg := &sync.WaitGroup{}
+    // Initialize Docker client with specified host.
+    docker, err := client.NewClientWithOpts(client.FromEnv, client.WithHost(config.DockerHost))
+    if err != nil {
+        return nil, fmt.Errorf("failed to create docker client: %w", err)
+    }
 
-	// Initialize RegistryActor and Coordinator
-	registryActor := NewRegistryActor(wg)
-	coordinator := NewCoordinatorActor(wg, registryActor)
+    wg := &sync.WaitGroup{}
 
-	reg := &Registry{
-		RegistryActor: registryActor,
-		Coordinator:   coordinator,
-		Docker:        docker,
-		Config:        config,
-		wg:            wg,
-	}
+    // Initialize RegistryActor and Coordinator.
+    registryActor := NewRegistryActor(wg)
+    coordinator := NewCoordinatorActor(wg, registryActor)
 
-	// Auto-discover repositories
-	if err := reg.discoverRepositories(); err != nil {
-		return nil, fmt.Errorf("failed to discover repositories: %w", err)
-	}
+    reg := &Registry{
+        RegistryActor: registryActor,
+        Coordinator:   coordinator,
+        Docker:        docker,
+        Config:        config,
+        wg:            wg,
+    }
 
-	// Start RegistryActor and Coordinator
-	reg.RegistryActor.Start()
-	reg.Coordinator.Start()
+    // Auto-discover repositories.
+    if err := reg.discoverRepositories(); err != nil {
+        return nil, fmt.Errorf("failed to discover repositories: %w", err)
+    }
 
-	return reg, nil
+    // Start RegistryActor and Coordinator.
+    reg.RegistryActor.Start()
+    reg.Coordinator.Start()
+
+    return reg, nil
 }
 
 // discoverRepositories scans the ProjectsPath for Git repositories and adds them to the registry.
 func (r *Registry) discoverRepositories() error {
-	entries, err := os.ReadDir(r.Config.ProjectsPath)
-	if err != nil {
-		return fmt.Errorf("failed to read projects directory: %w", err)
-	}
+    entries, err := os.ReadDir(r.Config.ProjectsPath)
+    if err != nil {
+        return fmt.Errorf("failed to read projects directory '%s': %w", r.Config.ProjectsPath, err)
+    }
 
 	for _, entry := range entries {
 		if !entry.IsDir() {

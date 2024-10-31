@@ -7,6 +7,22 @@ import (
     "time"
 )
 
+func TestRegistryInitialization(t *testing.T) {
+    registry, err := NewRegistry(
+        WithProjectsPath("/tmp/test-projects"),
+        WithDockerHost("unix:///var/run/docker.sock"),
+        WithLogLevel("debug"),
+    )
+    if err != nil {
+        t.Fatalf("Failed to initialize registry: %v", err)
+    }
+
+    if registry.Config.ProjectsPath != "/tmp/test-projects" {
+        t.Errorf("Expected ProjectsPath to be '/tmp/test-projects', got '%s'", registry.Config.ProjectsPath)
+    }
+    // Additional tests...
+}
+
 func TestRegistryBasicOperations(t *testing.T) {
     // Initialize registry with test configuration
     registry := NewRegistry[string, string](
