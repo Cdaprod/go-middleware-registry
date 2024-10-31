@@ -5,7 +5,9 @@ import (
     "context"
     "fmt"
     "io"
-    "os"
+	"os"
+	"encoding/json"
+    "strings"
     "path/filepath"
 
     "github.com/docker/docker/api/types"
@@ -13,18 +15,24 @@ import (
     "github.com/docker/docker/api/types/filters"
 )
 
+type DockerItem struct {
+	Name		string `json:"name"`
+	Image		string `json:"image"`
+	ConfigPath	string `json:"config_path,omitempty"`
+}
+
 // DockerInfo holds information about a repository's Docker capabilities
 type DockerInfo struct {
     HasDockerfile bool
     ImageID       string
     ImageTags     []string
     Containers    []types.Container
-    LastBuild     string
+
 }
 
 // GetDockerInfo retrieves Docker-related information for a repository
 func (r *Registry) GetDockerInfo(repoName string) (*DockerInfo, error) {
-    item, exists := r.Items[repoName]
+    item, exists := r.DockerItems[repoName]
     if !exists {
         return nil, fmt.Errorf("repository not found: %s", repoName)
     }

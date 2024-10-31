@@ -1,4 +1,4 @@
-// File: registry/registry.go
+
 package registry
 
 import (
@@ -33,6 +33,8 @@ type Registry struct {
 	Docker         *client.Client
 	Config         *Config
 	wg             *sync.WaitGroup
+
+	DockerItems	    map[string]*DockerItem
 }
 
 // Config holds the configuration settings for the Registry.
@@ -82,50 +84,67 @@ func NewRegistry() (*Registry, error) {
 
 // discoverRepositories scans the ProjectsPath for Git repositories and adds them to the registry.
 func (r *Registry) discoverRepositories() error {
-	entries, err := os.ReadDir(r.Config.ProjectsPath)
-	if err != nil {
-		return fmt.Errorf("failed to read projects directory: %w", err)
-	}
+    entries, err := os.ReadDir(r.Config.ProjectsPath)
+    if err != nil {
+        return fmt.Errorf("failed to read projects directory: %w", err)
+    }
 
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
+    baseRepoAdded := false
+    var wg sync.WaitGroup
+    errorsCh := make(chan error, len(entries))
 
-		// Use entry.Info() to retrieve os.FileInfo
-		info, err := entry.Info()
-		if err != nil {
-			return fmt.Errorf("failed to retrieve file info: %w", err)
-		}
+    for _, entry := range entries {
+        if !entry.IsDir() {
+            continue
+        }
 
-		projectPath := filepath.Join(r.Config.ProjectsPath, entry.Name())
+        wg.Add(1)
+        go func(entry os.DirEntry) {
+            defer wg.Done()
 
-		// Check if it's a git repository
-		repo, err := git.PlainOpen(projectPath)
-		isGitRepo := err == nil
+            projectPath := filepath.Join(r.Config.ProjectsPath, entry.Name())
+            _, err := git.PlainOpen(projectPath)
+            isGitRepo := err == nil
 
-		// Check for Dockerfile
-		_, dockerfileErr := os.Stat(filepath.Join(projectPath, "Dockerfile"))
-		hasDockerfile := dockerfileErr == nil
+            if !isGitRepo {
+                return // Not a Git repo, skip
+            }
 
-		if isGitRepo {
-			// Add the repository to the RegistryActor
-			r.RegistryActor.MsgChan <- AddRepo{
-				Name: entry.Name(),
-				Path: projectPath,
-			}
+            _, dockerfileErr := os.Stat(filepath.Join(projectPath, "Dockerfile"))
+            hasDockerfile := dockerfileErr == nil
 
-			// Optionally add to the Coordinator for dependency management
-			// Example: repoName depends on "base-repo"
-			if entry.Name() != "base-repo" {
-				r.Coordinator.AddDependency(entry.Name(), []string{"base-repo"})
-			}
+            r.RegistryActor.MsgChan <- AddRepo{
+                Name: entry.Name(),
+                Path: projectPath,
+            }
 
-			fmt.Printf("Repository '%s' discovered and added to the registry.\n", entry.Name())
-		}
-	}
+            if hasDockerfile {
+                fmt.Printf("Repository '%s' has a Dockerfile.\n", entry.Name())
+                // You can also add more logic here if needed
+            }
 
-	return nil
+            if !baseRepoAdded {
+                fmt.Printf("Setting repository '%s' as base-repo.\n", entry.Name())
+                r.Coordinator.AddDependency(entry.Name(), []string{})
+                baseRepoAdded = true
+            } else {
+                fmt.Printf("Repository '%s' discovered and added to the registry with base-repo dependency.\n", entry.Name())
+                r.Coordinator.AddDependency(entry.Name(), []string{"base-repo"})
+            }
+        }(entry)
+    }
+
+    wg.Wait()
+    close(errorsCh)
+
+    // Check for errors from goroutines
+    for err := range errorsCh {
+        if err != nil {
+            return err
+        }
+    }
+
+    return nil
 }
 
 // ListItems returns a list of all RegistryItems (repositories).
