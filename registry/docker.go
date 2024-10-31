@@ -6,6 +6,8 @@ import (
     "fmt"
     "io"
     "os"
+    "strings"
+    "encoding/json"
     "path/filepath"
 
     "github.com/docker/docker/api/types"
@@ -24,21 +26,22 @@ type DockerInfo struct {
 
 // GetDockerInfo retrieves Docker-related information for a repository
 func (r *Registry) GetDockerInfo(repoName string) (*DockerInfo, error) {
-    item, exists := r.Items[repoName]
+    // Access the repository from RegistryActor.Repos
+    repo, exists := r.RegistryActor.Repos[repoName]
     if !exists {
         return nil, fmt.Errorf("repository not found: %s", repoName)
     }
 
     info := &DockerInfo{
-        HasDockerfile: item.HasDockerfile,
+        HasDockerfile: repo.IsDocker, // Updated field
     }
 
-    if !item.HasDockerfile {
+    if !repo.IsDocker {
         return info, nil
     }
 
     // Get image information
-    imageName := fmt.Sprintf("%s:latest", item.Name)
+    imageName := fmt.Sprintf("%s:latest", repo.Name) // Updated field
     images, err := r.Docker.ImageList(context.Background(), types.ImageListOptions{
         Filters: filters.NewArgs(filters.Arg("reference", imageName)),
     })
